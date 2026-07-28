@@ -228,3 +228,161 @@ export function bAttr(value: boolean): { b: boolean; is_na: boolean } {
 export function naAttr(): { is_na: boolean } {
   return { is_na: true };
 }
+
+/** 构造 TEE PSI 节点（`preprocessing/psi`）。 */
+export function createTeePsiNode(
+  graphId: string,
+  idx: number,
+  inputs: string[],
+  options: {
+    receiverKey: string;
+    senderKey: string;
+    x: number;
+    y: number;
+  }
+): GraphNodeInfo {
+  return createNode(graphId, idx, 'preprocessing/psi', '隐私求交', {
+    x: options.x,
+    y: options.y,
+    inputs,
+    outputs: [outputAnchor(graphId, idx, 0)],
+    nodeDef: {
+      ...(options.receiverKey && options.senderKey
+        ? {
+            attrPaths: ['input/input1/key', 'input/input2/key'],
+            attrs: [sAttr(options.receiverKey), sAttr(options.senderKey)],
+          }
+        : {}),
+      domain: 'preprocessing',
+      name: 'psi',
+      version: '0.0.1',
+    },
+  });
+}
+
+/** 构造 `stats/table_statistics` 全表统计节点。 */
+export function createTableStatisticsNode(
+  graphId: string,
+  idx: number,
+  input: string,
+  options: {
+    x: number;
+    y: number;
+    features?: string[];
+    version?: string;
+  }
+): GraphNodeInfo {
+  const hasFeatures = options.features && options.features.length > 0;
+  return createNode(graphId, idx, 'stats/table_statistics', '全表统计', {
+    x: options.x,
+    y: options.y,
+    inputs: [input],
+    outputs: [outputAnchor(graphId, idx, 0)],
+    nodeDef: {
+      ...(hasFeatures
+        ? {
+            attrPaths: ['input/input_ds/features'],
+            attrs: [ssAttr(options.features!)],
+          }
+        : {}),
+      domain: 'stats',
+      name: 'table_statistics',
+      version: options.version ?? '0.0.1',
+    },
+  });
+}
+
+/** 构造 `data_prep/train_test_split` 或 `preprocessing/train_test_split` 随机分割节点。 */
+export function createTrainTestSplitNode(
+  graphId: string,
+  idx: number,
+  input: string,
+  options: {
+    x: number;
+    y: number;
+    domain?: 'data_prep' | 'preprocessing';
+    version?: string;
+  }
+): GraphNodeInfo {
+  const domain = options.domain ?? 'data_prep';
+  return createNode(graphId, idx, `${domain}/train_test_split`, '随机分割', {
+    x: options.x,
+    y: options.y,
+    inputs: [input],
+    outputs: [outputAnchor(graphId, idx, 0), outputAnchor(graphId, idx, 1)],
+    nodeDef: {
+      domain,
+      name: 'train_test_split',
+      version: options.version ?? '1.0.0',
+    },
+  });
+}
+
+/** 构造 `privacy/differential_privacy` 差分隐私节点。 */
+export function createDifferentialPrivacyNode(
+  graphId: string,
+  idx: number,
+  input: string,
+  options: {
+    x: number;
+    y: number;
+    queryType?: string;
+    queryCol?: string;
+    epsilonTotal?: number;
+    delta?: number;
+    epsilonPerQuery?: number;
+    deltaPerQuery?: number;
+    mechanism?: string;
+    columnSensitivities?: Record<string, number>;
+    bins?: unknown[];
+    trueCount?: number;
+    trueSum?: number;
+    trueCounts?: Record<string, unknown>;
+    sensitivity?: number;
+    randomState?: number;
+  }
+): GraphNodeInfo {
+  return createNode(graphId, idx, 'privacy/differential_privacy', '差分隐私', {
+    x: options.x,
+    y: options.y,
+    inputs: [input],
+    outputs: [outputAnchor(graphId, idx, 0)],
+    nodeDef: {
+      attrPaths: [
+        'query_type',
+        'query_col',
+        'epsilon_total',
+        'delta',
+        'epsilon_per_query',
+        'delta_per_query',
+        'mechanism',
+        'column_sensitivities_json',
+        'bins_json',
+        'true_count',
+        'true_sum',
+        'true_counts_json',
+        'sensitivity',
+        'random_state',
+      ],
+      attrs: [
+        sAttr(options.queryType ?? 'mean'),
+        sAttr(options.queryCol ?? 'age'),
+        fAttr(options.epsilonTotal ?? 1.0),
+        fAttr(options.delta ?? 0.0),
+        fAttr(options.epsilonPerQuery ?? 0.1),
+        fAttr(options.deltaPerQuery ?? 0.0),
+        sAttr(options.mechanism ?? 'laplace'),
+        jsonAttr(options.columnSensitivities ?? { age: 1.0 }),
+        jsonAttr(options.bins ?? []),
+        fAttr(options.trueCount ?? 0.0),
+        fAttr(options.trueSum ?? 0.0),
+        jsonAttr(options.trueCounts ?? {}),
+        fAttr(options.sensitivity ?? 0.0),
+        i64Attr(options.randomState ?? 0),
+      ],
+      domain: 'privacy',
+      name: 'differential_privacy',
+      version: '1.1.0',
+    },
+  });
+}

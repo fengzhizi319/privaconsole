@@ -13,7 +13,6 @@ import type {
   CreateDataSourceInput,
   CreateDataTableInput,
   DataTableColumn,
-  BackendTableColumn,
   ModelPackVO,
   ModelPackInfoVO,
   MessageVO,
@@ -55,10 +54,8 @@ import {
   ModelExportPackageResponseSchema,
   ModelPartyPathResponseSchema,
   ModelPackDetailVOSchema,
-  NodeRouterVOSchema,
   AllNodeResultsListVOSchema,
   NodeResultDetailVOSchema,
-  InstVOSchema,
   InstTokenVOSchema,
   ProjectParticipantsDetailVOSchema,
   UserContextDTOSchema,
@@ -68,8 +65,6 @@ import {
   UploadDataResultVOSchema,
   SyncDataDTOSchema,
   PullStatusVOSchema,
-  NodeSchema,
-  pageResponseSchema,
 } from './schemas';
 
 type SecretPadResponse<T> = {
@@ -143,15 +138,6 @@ async function postMultipart<T>(url: string, formData: FormData, schema: z.ZodTy
   if (!response.ok) throw new Error(`Upload failed with HTTP ${response.status}`);
   const json = (await response.json()) as SecretPadResponse<unknown>;
   return unwrapValidated(schema, json, context);
-}
-
-function mapBackendColumn(col: BackendTableColumn): DataTableColumn {
-  return {
-    name: col.colName || '',
-    type: col.colType || '',
-    comment: col.colComment,
-    classification: col.classification,
-  };
 }
 
 /** Map a backend ProjectVO into the normalized frontend Project shape. */
@@ -236,7 +222,7 @@ export const apiClient = {
   },
 
   async logout(): Promise<void> {
-    await api.POST('/api/v1alpha1/user/logout' as any).catch(() =>
+    await api.POST('/api/v1alpha1/user/logout' as any, { body: {} as any }).catch(() =>
       api.POST('/api/logout').catch(() => undefined)
     );
     localStorage.removeItem('secretpad-token');
@@ -474,7 +460,7 @@ export const apiClient = {
       const datasourceId = vo?.datasourceId || configs?.datasourceId || 'ds-' + nodeId;
       const relativeUri = vo?.relativeUri || configs?.relativeUri || tableId + '.csv';
 
-      let rawCols = configs?.columns || vo?.schema || vo?.columns || [];
+      const rawCols = configs?.columns || vo?.schema || vo?.columns || [];
       const columns: DataTableColumn[] = rawCols.map((c: any) => ({
         name: c.colName || c.name || '',
         type: c.colType || c.type || 'string',

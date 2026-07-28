@@ -79,10 +79,22 @@ function inferGraphName(template: AnyTemplateContribution): string {
   switch (template.metadata.key) {
     case 'psi':
       return `PSI 模板 ${now}`;
+    case 'psiGuide':
+      return `PSI 引导模板 ${now}`;
+    case 'psiTee':
+      return `TEE PSI 模板 ${now}`;
+    case 'psiTeeGuide':
+      return `TEE PSI 引导模板 ${now}`;
+    case 'scenarioPsi':
+      return `隐私求交场景 ${now}`;
     case 'risk':
       return `二分类建模 ${now}`;
+    case 'riskGuide':
+      return `二分类建模引导 ${now}`;
     case 'tee':
       return `TEE 二分类建模 ${now}`;
+    case 'teeGuide':
+      return `TEE 二分类建模引导 ${now}`;
     case 'dataClassification':
       return `数据分类分级 ${now}`;
     case 'sanitization':
@@ -95,6 +107,8 @@ function inferGraphName(template: AnyTemplateContribution): string {
       return `本地差分隐私 ${now}`;
     case 'differentialPrivacy':
       return `差分隐私查询 ${now}`;
+    case 'privacyGuide':
+      return `差分隐私引导 ${now}`;
     case 'queryObfuscation':
       return `查询混淆 ${now}`;
     case 'blank':

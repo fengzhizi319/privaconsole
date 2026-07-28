@@ -13,35 +13,50 @@ import { differentialPrivacyTemplate } from './templates/differential-privacy';
 import { kAnonymityTemplate } from './templates/k-anonymity';
 import { lDiversityTemplate } from './templates/l-diversity';
 import { localDifferentialPrivacyTemplate } from './templates/local-differential-privacy';
+import { privacyGuideTemplate } from './templates/privacy-guide';
 import { psiTemplate } from './templates/psi';
+import { psiGuideTemplate } from './templates/psi-guide';
+import { psiTeeTemplate } from './templates/psi-tee';
+import { psiTeeGuideTemplate } from './templates/psi-tee-guide';
 import { queryObfuscationTemplate } from './templates/query-obfuscation';
+import { riskGuideTemplate } from './templates/risk-guide';
 import { riskTemplate } from './templates/risk';
 import { sanitizationTemplate } from './templates/sanitization';
+import { scenarioPsiTemplate } from './templates/scenario-psi';
+import { teeGuideTemplate } from './templates/tee-guide';
 import { teeTemplate } from './templates/tee';
 
 /** 所有已注册的模板。 */
 export const allTemplates: AnyTemplateContribution[] = [
   blankTemplate,
   psiTemplate,
+  psiGuideTemplate,
+  psiTeeTemplate,
+  psiTeeGuideTemplate,
+  scenarioPsiTemplate,
   dataClassificationTemplate,
   sanitizationTemplate,
   kAnonymityTemplate,
   lDiversityTemplate,
   localDifferentialPrivacyTemplate,
-  queryObfuscationTemplate,
   differentialPrivacyTemplate,
+  privacyGuideTemplate,
+  queryObfuscationTemplate,
   riskTemplate,
+  riskGuideTemplate,
   teeTemplate,
+  teeGuideTemplate,
 ];
 
 /** 模板分类顺序与显示分组键。 */
-export const templateCategories = ['basic', 'privacy', 'ml'] as const;
+export const templateCategories = ['basic', 'privacy', 'ml', 'guide'] as const;
 
 /** 分类的 i18n 键前缀。 */
 export const categoryNameKey: Record<(typeof templateCategories)[number], string> = {
   basic: 'dag.templateCategory.basic',
   privacy: 'dag.templateCategory.privacy',
   ml: 'dag.templateCategory.ml',
+  guide: 'dag.templateCategory.guide',
 };
 
 /** 按 category 分组的模板。 */
@@ -71,13 +86,13 @@ export function templateByKey(key: string): AnyTemplateContribution | undefined 
  * 当前通过 key 判定；未来可在 TemplateMetadata 增加显式字段。
  */
 export function isTwoTableTemplate(template: AnyTemplateContribution): boolean {
-  return ['psi', 'risk', 'tee'].includes(template.metadata.key);
+  return ['psi', 'psiTee', 'scenarioPsi', 'risk', 'tee'].includes(template.metadata.key);
 }
 
 /**
  * 类型守卫：判断模板是否需要单表输入。
  *
- * 包含除空白/双表/查询混淆之外的所有隐私组件模板。
+ * 包含除空白/双表/查询混淆/引导式之外的所有隐私组件模板。
  */
 export function isSingleTableTemplate(template: AnyTemplateContribution): boolean {
   const singleKeys = [
@@ -116,7 +131,16 @@ export function needsPredictionName(template: AnyTemplateContribution): boolean 
  * 类型守卫：判断模板是否完全不需要参数（直接创建即可）。
  */
 export function needsNoInputs(template: AnyTemplateContribution): boolean {
-  return template.metadata.key === 'blank' || template.metadata.key === 'queryObfuscation';
+  const noInputKeys = [
+    'blank',
+    'queryObfuscation',
+    'psiGuide',
+    'psiTeeGuide',
+    'privacyGuide',
+    'riskGuide',
+    'teeGuide',
+  ];
+  return noInputKeys.includes(template.metadata.key);
 }
 
 /** 窄化模板为具体泛型类型（ wizard 内部使用）。 */

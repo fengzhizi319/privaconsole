@@ -137,3 +137,10 @@ export interface TeeTemplateConfig extends TwoTableTemplateConfig {
   featureSelects: { ss: string[] };
   labelSelects: { s: string };
 }
+
+/**
+ * 引导式模板配置占位类型。
+ *
+ * 引导式模板参数已预填充，无需用户在向导中填写，因此配置对象为空。
+ */
+export type GuideTemplateConfig = Record<string, unknown>;

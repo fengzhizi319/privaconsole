@@ -125,7 +125,8 @@ export const DataSourceSchema = z.object({
   nodes: z.array(DataSourceNodeSchema).default([]),
   status: z.string().optional(),
   createTime: z.string().optional(),
-  info: z.record(z.any()).optional(),
+  // 后端在部分数据源场景下 info 可能返回 null.
+  info: z.record(z.any()).nullable().optional(),
   // legacy fallbacks
   nodeId: z.string().optional(),
 });
@@ -715,7 +716,8 @@ export const DatasourceDetailAggregateVOSchema = z.object({
   name: z.string().optional(),
   type: z.string().optional(),
   status: z.string().optional(),
-  info: z.record(z.any()).optional(),
+  // 后端 HTTP 数据源详情等场景下 info 可能为 null,schema 需兼容 null/undefined.
+  info: z.record(z.any()).nullable().optional(),
 });
 export type DatasourceDetailAggregateVO = z.infer<typeof DatasourceDetailAggregateVOSchema>;
 

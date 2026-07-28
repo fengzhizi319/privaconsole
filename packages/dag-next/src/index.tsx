@@ -768,38 +768,52 @@ function formatReactChild(val: any, fallback = ''): string {
           onDrop={(e) => {
             e.preventDefault();
             if (readOnly) return;
+            const raw = e.dataTransfer.getData('application/json');
+            if (!raw) return;
+            let component: DAGComponentDef;
             try {
-              const raw = e.dataTransfer.getData('application/json');
-              if (!raw) return;
-              const component: DAGComponentDef = JSON.parse(raw);
-              if (!component || !component.name || !component.domain) return;
-
-              const rect = canvasRef.current?.getBoundingClientRect();
-              const dropX = rect ? Math.max(20, Math.min(rect.width - 160, e.clientX - rect.left - 70)) : 100 + nodes.length * 30;
-              const dropY = rect ? Math.max(20, Math.min(rect.height - 80, e.clientY - rect.top - 20)) : 100 + nodes.length * 30;
-
-              const codeName = `${component.domain}/${component.name}`;
-              const label = i18nMap[component.name] || i18nMap[codeName] || component.name;
-
-              const newNode: DAGNode = {
-                id: `node-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-                name: label,
-                codeName,
-                domain: component.domain,
-                version: component.version,
-                category: component.domain,
-                icon: component.icon || '⚙️',
-                status: 'Ready',
-                x: Math.round(dropX),
-                y: Math.round(dropY),
-              };
-
-              setNodes((prev) => [...prev, newNode]);
-              setSelectedNode(newNode);
-              if (onAddNode) onAddNode(newNode);
+              component = JSON.parse(raw);
             } catch (err) {
               console.error('Failed to parse dragged component:', err);
+              return;
             }
+            if (!component || !component.name || !component.domain) return;
+
+            const rect = canvasRef.current?.getBoundingClientRect();
+            const dropX = rect ? Math.max(20, Math.min(rect.width - 160, e.clientX - rect.left - 70)) : 100 + nodes.length * 30;
+            const dropY = rect ? Math.max(20, Math.min(rect.height - 80, e.clientY - rect.top - 20)) : 100 + nodes.length * 30;
+
+            // 与 handleAddComponent 的添加行为保持一致：存在 onAddNode 时由后端创建节点并返回 DAGNode，
+            // 这里仅用落点坐标覆盖其位置；不存在时按与点击添加相同的结构在本地构造节点。
+            void (async () => {
+              let newNode: DAGNode;
+              if (onAddNode) {
+                newNode = await onAddNode(component);
+                newNode = { ...newNode, x: Math.round(dropX), y: Math.round(dropY) };
+              } else {
+                const codeName = `${component.domain}/${component.name}`;
+                const label = i18nMap[component.name] || i18nMap[codeName] || component.name;
+                newNode = {
+                  id: `node-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+                  name: label,
+                  codeName,
+                  category: component.domain,
+                  icon: component.icon || '⚙️',
+                  status: 'Ready',
+                  x: Math.round(dropX),
+                  y: Math.round(dropY),
+                  nodeDef: {
+                    domain: component.domain,
+                    name: component.name,
+                    version: component.version,
+                  },
+                  inputs: [],
+                  outputs: [],
+                };
+              }
+              setNodes((prev) => [...prev, newNode]);
+              handleSelectNode(newNode);
+            })().catch((err) => console.error('Failed to add dropped component:', err));
           }}
           style={{ cursor: pendingConnection ? 'crosshair' : 'default' }}
         >

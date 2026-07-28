@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useSearch } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, Button, Badge, Modal, ConfirmDialog, toast } from '@secretpad/design-system';
 import type {
@@ -108,8 +109,12 @@ export const DAGPage: React.FC = () => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
-  const [selectedGraphId, setSelectedGraphId] = useState<string>('');
+  // 支持从 URL 查询参数（/dag?projectId=xxx&graphId=yyy）定位项目与图，
+  // 供 Graph 管理页 / 运行记录页等跳转复用。
+  const search = useSearch({ strict: false }) as { projectId?: string; graphId?: string };
+
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(search.projectId || '');
+  const [selectedGraphId, setSelectedGraphId] = useState<string>(search.graphId || '');
   const [error, setError] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newGraphName, setNewGraphName] = useState('');
