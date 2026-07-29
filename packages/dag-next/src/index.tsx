@@ -370,8 +370,12 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   const [pendingConnection, setPendingConnection] = useState(false);
   /** 组件解释器当前解释的算子（null 表示关闭）。 */
   const [interpreterComponent, setInterpreterComponent] = useState<DAGComponentDef | null>(null);
+  /** 节点右键菜单状态。 */
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: DAGNode } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
+  /** 复制粘贴剪贴板。 */
+  const clipboardRef = useRef<DAGNode | null>(null);
 
   useEffect(() => {
     setNodes(initialNodes);
@@ -406,6 +410,82 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
       setSelectedNode(found);
     }
   }, [nodes, selectedNode?.id]);
+
+  /* ------------------------------------------------------------------------ */
+  /* 键盘快捷键：Delete/Cmd+C/Cmd+V/Cmd+D，对应原版 HotKeys 中的核心操作。 */
+  /* ------------------------------------------------------------------------ */
+  useEffect(() => {
+    if (readOnly) return;
+    const handler = (e: KeyboardEvent) => {
+      // 忽略输入框内的按键
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      const isMeta = e.metaKey || e.ctrlKey;
+
+      // Delete / Backspace: 删除选中节点
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNode) {
+        e.preventDefault();
+        handleDeleteNode(selectedNode.id);
+        return;
+      }
+      // Cmd/Ctrl+C: 复制选中节点
+      if (isMeta && e.key === 'c' && selectedNode) {
+        e.preventDefault();
+        clipboardRef.current = { ...selectedNode };
+        return;
+      }
+      // Cmd/Ctrl+V: 粘贴节点
+      if (isMeta && e.key === 'v' && clipboardRef.current) {
+        e.preventDefault();
+        handlePasteNode();
+        return;
+      }
+      // Cmd/Ctrl+D: 复制并偏移节点
+      if (isMeta && e.key === 'd' && selectedNode) {
+        e.preventDefault();
+        handleDuplicateNode(selectedNode);
+        return;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [readOnly, selectedNode, nodes, edges]);
+
+  /** 粘贴节点：从剪贴板创建新节点，偏移 40px。 */
+  const handlePasteNode = () => {
+    const src = clipboardRef.current;
+    if (!src) return;
+    const newNode: DAGNode = {
+      ...src,
+      id: `${src.category}-${src.name}-${Date.now().toString(36)}`,
+      x: src.x + 40,
+      y: src.y + 40,
+      status: 'Ready',
+    };
+    setNodes((prev) => [...prev, newNode]);
+    setSelectedNode(newNode);
+    if (onNodeSelect) onNodeSelect(newNode);
+  };
+
+  /** 复制并偏移节点。 */
+  const handleDuplicateNode = (node: DAGNode) => {
+    const newNode: DAGNode = {
+      ...node,
+      id: `${node.category}-${node.name}-${Date.now().toString(36)}`,
+      x: node.x + 40,
+      y: node.y + 40,
+      status: 'Ready',
+    };
+    setNodes((prev) => [...prev, newNode]);
+    setSelectedNode(newNode);
+    if (onNodeSelect) onNodeSelect(newNode);
+  };
+
+  /** 复制节点到剪贴板。 */
+  const handleCopyNode = (node: DAGNode) => {
+    clipboardRef.current = { ...node };
+  };
 
   const handleSelectNode = (node: DAGNode) => {
     setSelectedNode(node);
@@ -801,6 +881,14 @@ function formatReactChild(val: any, fallback = ''): string {
         onClick={(e) => {
           e.stopPropagation();
           handleNodeClickForConnect(node);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!readOnly) {
+            setSelectedNode(node);
+            setContextMenu({ x: e.clientX, y: e.clientY, node });
+          }
         }}
         style={{ left: `${node.x}px`, top: `${node.y}px` }}
         className={`absolute w-36 p-3 rounded-lg bg-gray-950 border-2 shadow-lg transition-all z-10 select-none ${
@@ -1208,6 +1296,49 @@ function formatReactChild(val: any, fallback = ''): string {
           allowedTypes: labels.interpreterTypes ?? '类型',
         }}
       />
+
+      {/* 节点右键菜单：对应原版 graph-hook-service 中的节点右键操作 */}
+      {contextMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
+          <div
+            className="fixed z-50 min-w-[160px] py-1 rounded-lg bg-gray-900 border border-gray-700 shadow-xl text-xs"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            {onRunSingle && (
+              <button className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-gray-800 hover:text-white" onClick={() => { setContextMenu(null); handleRunSingle(); }}>
+                ▶️ {labels.runSingle ?? 'Run Single'}
+              </button>
+            )}
+            {onRunDown && (
+              <button className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-gray-800 hover:text-white" onClick={() => { setContextMenu(null); handleRunDown(); }}>
+                ⬇️ {labels.runDown ?? 'Run Downstream'}
+              </button>
+            )}
+            {onRunUp && (
+              <button className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-gray-800 hover:text-white" onClick={() => { setContextMenu(null); handleRunUp(); }}>
+                ⬆️ {labels.runUp ?? 'Run Upstream'}
+              </button>
+            )}
+            {(onRunSingle || onRunDown || onRunUp) && <div className="my-1 border-t border-gray-700" />}
+            <button className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-gray-800 hover:text-white" onClick={() => { setContextMenu(null); handleCopyNode(contextMenu.node); }}>
+              📋 Copy <span className="text-gray-500 ml-2">⌘C</span>
+            </button>
+            <button className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-gray-800 hover:text-white" onClick={() => { setContextMenu(null); handleDuplicateNode(contextMenu.node); }}>
+              📄 Duplicate <span className="text-gray-500 ml-2">⌘D</span>
+            </button>
+            {clipboardRef.current && (
+              <button className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-gray-800 hover:text-white" onClick={() => { setContextMenu(null); handlePasteNode(); }}>
+                📌 Paste <span className="text-gray-500 ml-2">⌘V</span>
+              </button>
+            )}
+            <div className="my-1 border-t border-gray-700" />
+            <button className="w-full px-3 py-1.5 text-left text-red-400 hover:bg-red-900/30 hover:text-red-300" onClick={() => { setContextMenu(null); handleDeleteNode(contextMenu.node.id); }}>
+              🗑️ Delete <span className="text-gray-500 ml-2">Del</span>
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 };
