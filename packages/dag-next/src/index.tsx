@@ -17,6 +17,9 @@ export type { LogViewerProps, LogViewerLabels } from './log-viewer';
 // 统一导出结果可视化组件集。
 export { ResultVisualization, OutputTable, StatsChart, KeyValuePanel, CorrelationHeatmap } from './result-visualization';
 export type { ResultVisualizationProps, ResultVisualizationLabels, OutputTableProps, StatsChartProps, KeyValuePanelProps, CorrelationHeatmapProps } from './result-visualization';
+// 统一导出执行记录时间线。
+export { ExecutionTimeline } from './execution-timeline';
+export type { ExecutionTimelineProps, ExecutionTimelineLabels, ExecutionRecord, JobStatus, PaginationInfo } from './execution-timeline';
 
 export type DAGNodeStatus = 'Ready' | 'Running' | 'Success' | 'Failed' | 'Staging' | 'Stopped';
 
@@ -151,6 +154,16 @@ export interface DAGCanvasProps {
     tidyLayout?: string;
     /** 无选中节点提示。 */
     selectNodeFirst?: string;
+    /** 全屏。 */
+    fullscreen?: string;
+    /** 退出全屏。 */
+    exitFullscreen?: string;
+    /** 导出 JSON。 */
+    exportJson?: string;
+    /** 导入 JSON。 */
+    importJson?: string;
+    /** 运行记录。 */
+    records?: string;
   };
   onNodeSelect?: (node: DAGNode | null) => void;
   onNodeMove?: (node: DAGNode) => void | Promise<void>;
@@ -362,6 +375,7 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   const [edges, setEdges] = useState<DAGEdge[]>(initialEdges);
   const [selectedNode, setSelectedNode] = useState<DAGNode | null>(null);
   const [zoom, setZoom] = useState(100);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeTab, setActiveTab] = useState<'config' | 'log' | 'output'>('config');
   const [isDragging, setIsDragging] = useState(false);
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
@@ -776,6 +790,46 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
     setNodes(laid);
   };
 
+  /** 全屏切换。 */
+  const handleToggleFullscreen = () => {
+    setIsFullscreen((f) => !f);
+  };
+
+  /** 导出 DAG JSON：将当前画布状态序列化为 JSON 文件下载。 */
+  const handleExportJson = () => {
+    const data = JSON.stringify({ nodes, edges }, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title || 'dag'}-export.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /** 导入 DAG JSON：从文件读取并更新画布。 */
+  const handleImportJson = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target?.result as string);
+          if (Array.isArray(data.nodes)) setNodes(data.nodes);
+          if (Array.isArray(data.edges)) setEdges(data.edges);
+        } catch {
+          // 解析失败静默处理
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
   const handleSave = async () => {
     if (!onSaveGraph) return;
     await onSaveGraph(nodes, edges);
@@ -1002,7 +1056,7 @@ function formatReactChild(val: any, fallback = ''): string {
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-gray-900 text-gray-100 rounded-xl overflow-hidden border border-gray-800 shadow-2xl">
+    <div className={`flex flex-col bg-gray-900 text-gray-100 overflow-hidden border border-gray-800 shadow-2xl ${isFullscreen ? 'fixed inset-0 z-50 rounded-none' : 'h-full w-full rounded-xl'}`}>
       {/* Canvas Top Bar */}
       <div className="h-12 bg-gray-950 border-b border-gray-800 px-4 flex items-center justify-between text-xs">
         <div className="flex items-center gap-3 min-w-0">
@@ -1029,6 +1083,17 @@ function formatReactChild(val: any, fallback = ''): string {
           <Button size="sm" variant="ghost" onClick={handleTidyLayout} title={labels.tidyLayout ?? 'Tidy Layout'}>
             📐
           </Button>
+          <Button size="sm" variant="ghost" onClick={handleToggleFullscreen} title={isFullscreen ? (labels.exitFullscreen ?? 'Exit Fullscreen') : (labels.fullscreen ?? 'Fullscreen')}>
+            {isFullscreen ? '🡐' : '⛶'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleExportJson} title={labels.exportJson ?? 'Export JSON'}>
+            📤
+          </Button>
+          {!readOnly && (
+            <Button size="sm" variant="ghost" onClick={handleImportJson} title={labels.importJson ?? 'Import JSON'}>
+              📥
+            </Button>
+          )}
           <div className="h-4 w-px bg-gray-800 mx-1" />
           {onSaveGraph && (
             <Button size="sm" variant="outline" loading={loading} onClick={handleSave}>

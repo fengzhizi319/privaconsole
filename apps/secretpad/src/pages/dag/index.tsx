@@ -11,7 +11,8 @@ import type {
 } from '@secretpad/api-client';
 import { apiClient } from '@secretpad/api-client';
 import type { DAGNode, DAGEdge, DAGComponentDef } from '@secretpad/dag-next';
-import { DAGNextWorkspace } from '@secretpad/dag-next';
+import { DAGNextWorkspace, ExecutionTimeline } from '@secretpad/dag-next';
+import type { ExecutionRecord } from '@secretpad/dag-next';
 import { useTranslation } from '../../shared/lib/i18n';
 import { AccessGuard } from '../../features/auth/ui/access-guard';
 import { Platform } from '../../shared/lib/platform';
@@ -124,6 +125,8 @@ export const DAGPage: React.FC = () => {
   const [selectedNode, setSelectedNode] = useState<DAGNode | null>(null);
   const [isPackModalOpen, setIsPackModalOpen] = useState(false);
   const [isScheduledModalOpen, setIsScheduledModalOpen] = useState(false);
+  const [isRecordsDrawerOpen, setIsRecordsDrawerOpen] = useState(false);
+  const [executionRecords, setExecutionRecords] = useState<ExecutionRecord[]>([]);
 
   const dagLabels = useMemo(
     () => ({
@@ -642,6 +645,31 @@ export const DAGPage: React.FC = () => {
                 {t('dag.createPeriodicTask')}
               </Button>
             )}
+            {selectedGraph && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setIsRecordsDrawerOpen(true);
+                  // 加载运行记录（简化实现：从 API 获取作业历史）
+                  (apiClient as any).listJobs?.(selectedProjectId, selectedGraph.graphId || '')
+                    .then((jobs: any[]) => {
+                      setExecutionRecords((jobs || []).map((j: any) => ({
+                        jobId: j.jobId || j.id || '',
+                        status: (j.status || 'RUNNING').toUpperCase() as any,
+                        gmtCreate: j.gmtCreate || j.startTime || j.createdAt || '',
+                        gmtFinished: j.gmtFinished || j.endTime || undefined,
+                        taskCount: j.taskCount ?? j.totalTasks ?? 0,
+                        finishedTaskCount: j.finishedTaskCount ?? j.completedTasks ?? 0,
+                        errMsg: j.errMsg || j.errorMsg || undefined,
+                      })));
+                    })
+                    .catch(() => setExecutionRecords([]));
+                }}
+              >
+                📜 {t('dag.records') !== 'dag.records' ? t('dag.records') : 'Records'}
+              </Button>
+            )}
             {selectedNode && selectedNode.status === 'Success' && (selectedNode.codeName || '').includes('train') && (
               <Button
                 variant="outline"
@@ -852,6 +880,30 @@ export const DAGPage: React.FC = () => {
           graphName={selectedGraph.name}
           nodes={nodes}
         />
+      )}
+
+      {/* Execution Records Drawer */}
+      {isRecordsDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setIsRecordsDrawerOpen(false)} />
+          <div className="relative w-96 h-full bg-gray-900 border-l border-gray-800 shadow-2xl overflow-y-auto">
+            <div className="p-4">
+              <ExecutionTimeline
+                records={executionRecords}
+                labels={{
+                  title: t('dag.records') !== 'dag.records' ? t('dag.records') : 'Execution Records',
+                  empty: t('common.empty'),
+                  loading: t('common.loading'),
+                  stop: t('dag.stop'),
+                }}
+                onSelect={(jobId: string) => {
+                  // 选中记录后可跳转到对应作业详情
+                  console.log('Selected job:', jobId);
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
