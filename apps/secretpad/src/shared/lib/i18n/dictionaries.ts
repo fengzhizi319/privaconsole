@@ -690,6 +690,12 @@ const zh: Dictionary = {
     logWrap: '自动换行',
     logAutoScroll: '自动滚动到底部',
     logLines: '行数',
+    // DAG 执行模式
+    runSingle: '执行单节点',
+    runDown: '执行下游',
+    runUp: '执行上游',
+    tidyLayout: '自动布局',
+    selectNodeFirst: '请先选中一个节点',
   },
   nodeRoutes: {
     title: '节点路由',
@@ -1568,6 +1574,12 @@ const en: Dictionary = {
     logWrap: 'Word wrap',
     logAutoScroll: 'Auto scroll to bottom',
     logLines: 'Lines',
+    // DAG execution modes
+    runSingle: 'Run Single Node',
+    runDown: 'Run Downstream',
+    runUp: 'Run Upstream',
+    tidyLayout: 'Tidy Layout',
+    selectNodeFirst: 'Please select a node first',
   },
   nodeRoutes: {
     title: 'Node Routes',

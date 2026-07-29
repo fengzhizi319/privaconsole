@@ -176,6 +176,13 @@ export const DAGPage: React.FC = () => {
       logWrap: t('dag.logWrap'),
       logAutoScroll: t('dag.logAutoScroll'),
       logLines: t('dag.logLines'),
+      // DAG 执行模式文案
+      runSingle: t('dag.runSingle'),
+      runDown: t('dag.runDown'),
+      runUp: t('dag.runUp'),
+      stop: t('dag.stop'),
+      tidyLayout: t('dag.tidyLayout'),
+      selectNodeFirst: t('dag.selectNodeFirst'),
     }),
     [t]
   );
@@ -372,6 +379,70 @@ export const DAGPage: React.FC = () => {
         queryKey: ['graph-detail', selectedProjectId, selectedGraph.graphId],
       });
       toast.success(t('dag.started', { jobId }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  };
+
+  const handleRunSingle = async (node: DAGNode) => {
+    if (!selectedProjectId || !selectedGraph?.graphId) return;
+    try {
+      await apiClient.startGraph(selectedProjectId, selectedGraph.graphId, [node.id]);
+      queryClient.invalidateQueries({
+        queryKey: ['graph-detail', selectedProjectId, selectedGraph.graphId],
+      });
+      toast.success(t('dag.started', { jobId: node.id }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  };
+
+  const handleRunDown = async (_node: DAGNode, downstreamNodes: DAGNode[]) => {
+    if (!selectedProjectId || !selectedGraph?.graphId) return;
+    try {
+      await apiClient.startGraph(
+        selectedProjectId,
+        selectedGraph.graphId,
+        downstreamNodes.map((n) => n.id)
+      );
+      queryClient.invalidateQueries({
+        queryKey: ['graph-detail', selectedProjectId, selectedGraph.graphId],
+      });
+      toast.success(t('dag.started', { jobId: `${downstreamNodes.length} nodes` }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  };
+
+  const handleRunUp = async (_node: DAGNode, upstreamNodes: DAGNode[]) => {
+    if (!selectedProjectId || !selectedGraph?.graphId) return;
+    try {
+      await apiClient.startGraph(
+        selectedProjectId,
+        selectedGraph.graphId,
+        upstreamNodes.map((n) => n.id)
+      );
+      queryClient.invalidateQueries({
+        queryKey: ['graph-detail', selectedProjectId, selectedGraph.graphId],
+      });
+      toast.success(t('dag.started', { jobId: `${upstreamNodes.length} nodes` }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  };
+
+  const handleStopGraph = async () => {
+    if (!selectedProjectId || !selectedGraph?.graphId) return;
+    try {
+      await apiClient.stopGraph(selectedProjectId, selectedGraph.graphId);
+      queryClient.invalidateQueries({
+        queryKey: ['graph-detail', selectedProjectId, selectedGraph.graphId],
+      });
+      toast.success(t('dag.stopSuccess'));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       throw e;
@@ -611,6 +682,10 @@ export const DAGPage: React.FC = () => {
               i18nMap={i18nMap}
               onSaveGraph={handleSaveGraph}
               onRunGraph={handleRunGraph}
+              onRunSingle={handleRunSingle}
+              onRunDown={handleRunDown}
+              onRunUp={handleRunUp}
+              onStopGraph={handleStopGraph}
               onNodeMove={handleNodeMove}
               onNodeConfigChange={handleNodeConfigChange}
               onNodeLogs={handleNodeLogs}

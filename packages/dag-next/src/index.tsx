@@ -139,6 +139,18 @@ export interface DAGCanvasProps {
     logAutoScroll?: string;
     /** 日志查看器：行数控件。 */
     logLines?: string;
+    /** 执行单节点。 */
+    runSingle?: string;
+    /** 执行下游。 */
+    runDown?: string;
+    /** 执行上游。 */
+    runUp?: string;
+    /** 停止执行。 */
+    stop?: string;
+    /** 自动布局。 */
+    tidyLayout?: string;
+    /** 无选中节点提示。 */
+    selectNodeFirst?: string;
   };
   onNodeSelect?: (node: DAGNode | null) => void;
   onNodeMove?: (node: DAGNode) => void | Promise<void>;
@@ -148,6 +160,14 @@ export interface DAGCanvasProps {
   onGetComponentDef?: (node: DAGNode) => Promise<ComponentMetadata | null>;
   onSaveGraph?: (nodes: DAGNode[], edges: DAGEdge[]) => void | Promise<void>;
   onRunGraph?: (nodes: DAGNode[], edges: DAGEdge[]) => void | Promise<void>;
+  /** 执行单节点。 */
+  onRunSingle?: (node: DAGNode) => void | Promise<void>;
+  /** 执行选中节点及其下游。 */
+  onRunDown?: (node: DAGNode, downstreamNodes: DAGNode[]) => void | Promise<void>;
+  /** 执行选中节点及其上游。 */
+  onRunUp?: (node: DAGNode, upstreamNodes: DAGNode[]) => void | Promise<void>;
+  /** 停止执行。 */
+  onStopGraph?: () => void | Promise<void>;
   onAddNode?: (component: DAGComponentDef) => DAGNode | Promise<DAGNode>;
   onConnect?: (sourceId: string, targetId: string) => DAGEdge | Promise<DAGEdge> | null | undefined;
 }
@@ -203,6 +223,113 @@ function renderOutput(output: Record<string, any> | null, noOutputLabel = 'No ou
   return <ResultVisualization output={output} labels={{ noOutput: noOutputLabel }} />;
 }
 
+/**
+ * 图遍历工具：获取指定节点的下游/上游节点集合。
+ * 对应原版 `run-down.ts` / `run-up.ts` 中的 DAG 遍历逻辑。
+ */
+function getDownstreamNodes(nodeId: string, nodes: DAGNode[], edges: DAGEdge[]): DAGNode[] {
+  const visited = new Set<string>();
+  const queue = [nodeId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const edge of edges) {
+      if (edge.source === current && !visited.has(edge.target)) {
+        visited.add(edge.target);
+        queue.push(edge.target);
+      }
+    }
+  }
+  return nodes.filter((n) => visited.has(n.id));
+}
+
+function getUpstreamNodes(nodeId: string, nodes: DAGNode[], edges: DAGEdge[]): DAGNode[] {
+  const visited = new Set<string>();
+  const queue = [nodeId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const edge of edges) {
+      if (edge.target === current && !visited.has(edge.source)) {
+        visited.add(edge.source);
+        queue.push(edge.source);
+      }
+    }
+  }
+  return nodes.filter((n) => visited.has(n.id));
+}
+
+/**
+ * 自动布局算法：拓扑排序 + 分层布局。
+ * 对应原版 `tidy-layout.ts` 中的 Dagre 布局。
+ * 这里实现一个简化的分层布局：按拓扑序分层，同层节点垂直排列。
+ */
+function tidyLayout(nodes: DAGNode[], edges: DAGEdge[]): DAGNode[] {
+  if (nodes.length === 0) return nodes;
+
+  // 计算入度
+  const inDegree = new Map<string, number>();
+  const adjacency = new Map<string, string[]>();
+  nodes.forEach((n) => {
+    inDegree.set(n.id, 0);
+    adjacency.set(n.id, []);
+  });
+  edges.forEach((e) => {
+    if (inDegree.has(e.target) && adjacency.has(e.source)) {
+      inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+      adjacency.get(e.source)!.push(e.target);
+    }
+  });
+
+  // BFS 拓扑排序分层
+  const layers: string[][] = [];
+  let queue = nodes.filter((n) => (inDegree.get(n.id) || 0) === 0).map((n) => n.id);
+  const visited = new Set<string>();
+
+  while (queue.length > 0) {
+    layers.push([...queue]);
+    queue.forEach((id) => visited.add(id));
+    const nextQueue: string[] = [];
+    for (const id of queue) {
+      for (const target of adjacency.get(id) || []) {
+        const deg = (inDegree.get(target) || 1) - 1;
+        inDegree.set(target, deg);
+        if (deg === 0 && !visited.has(target)) {
+          nextQueue.push(target);
+        }
+      }
+    }
+    queue = nextQueue;
+  }
+
+  // 处理未被访问的节点（环形依赖或孤立节点）
+  const unvisited = nodes.filter((n) => !visited.has(n.id));
+  if (unvisited.length > 0) {
+    layers.push(unvisited.map((n) => n.id));
+  }
+
+  // 布局参数
+  const layerGapX = 220;
+  const nodeGapY = 100;
+  const startX = 80;
+  const startY = 60;
+
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const result: DAGNode[] = [];
+
+  layers.forEach((layer, layerIdx) => {
+    const x = startX + layerIdx * layerGapX;
+    const totalHeight = (layer.length - 1) * nodeGapY;
+    const offsetY = startY + (300 - totalHeight / 2); // 居中
+    layer.forEach((id, nodeIdx) => {
+      const node = nodeMap.get(id);
+      if (node) {
+        result.push({ ...node, x, y: offsetY + nodeIdx * nodeGapY });
+      }
+    });
+  });
+
+  return result;
+}
+
 export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   title = 'DAG Pipeline Editor',
   initialNodes = DEFAULT_NODES,
@@ -220,6 +347,10 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   onGetComponentDef,
   onSaveGraph,
   onRunGraph,
+  onRunSingle,
+  onRunDown,
+  onRunUp,
+  onStopGraph,
   onAddNode,
   onConnect,
   labels = DEFAULT_LABELS,
@@ -480,6 +611,33 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
     await onRunGraph(nodes, edges);
   };
 
+  const handleRunSingle = async () => {
+    if (!onRunSingle || !selectedNode) return;
+    await onRunSingle(selectedNode);
+  };
+
+  const handleRunDown = async () => {
+    if (!onRunDown || !selectedNode) return;
+    const downstream = getDownstreamNodes(selectedNode.id, nodes, edges);
+    await onRunDown(selectedNode, [selectedNode, ...downstream]);
+  };
+
+  const handleRunUp = async () => {
+    if (!onRunUp || !selectedNode) return;
+    const upstream = getUpstreamNodes(selectedNode.id, nodes, edges);
+    await onRunUp(selectedNode, [...upstream, selectedNode]);
+  };
+
+  const handleStop = async () => {
+    if (!onStopGraph) return;
+    await onStopGraph();
+  };
+
+  const handleTidyLayout = () => {
+    const laid = tidyLayout(nodes, edges);
+    setNodes(laid);
+  };
+
   const handleSave = async () => {
     if (!onSaveGraph) return;
     await onSaveGraph(nodes, edges);
@@ -704,6 +862,9 @@ function formatReactChild(val: any, fallback = ''): string {
           <Button size="sm" variant="ghost" onClick={() => setZoom((z) => Math.max(50, z - 10))}>🔍 -</Button>
           <span className="font-mono text-gray-400 text-xs w-10 text-center">{zoom}%</span>
           <Button size="sm" variant="ghost" onClick={() => setZoom((z) => Math.min(150, z + 10))}>🔍 +</Button>
+          <Button size="sm" variant="ghost" onClick={handleTidyLayout} title={labels.tidyLayout ?? 'Tidy Layout'}>
+            📐
+          </Button>
           <div className="h-4 w-px bg-gray-800 mx-1" />
           {onSaveGraph && (
             <Button size="sm" variant="outline" loading={loading} onClick={handleSave}>
@@ -712,7 +873,27 @@ function formatReactChild(val: any, fallback = ''): string {
           )}
           {onRunGraph && (
             <Button size="sm" variant="primary" loading={loading} onClick={handleRun}>
-              ▶ {labels.run ?? 'Run'}
+              ▶ {labels.run ?? 'Run All'}
+            </Button>
+          )}
+          {onRunSingle && (
+            <Button size="sm" variant="outline" onClick={handleRunSingle} disabled={!selectedNode} title={labels.runSingle ?? 'Run Single Node'}>
+              ▶️
+            </Button>
+          )}
+          {onRunDown && (
+            <Button size="sm" variant="outline" onClick={handleRunDown} disabled={!selectedNode} title={labels.runDown ?? 'Run Downstream'}>
+              ⬇️
+            </Button>
+          )}
+          {onRunUp && (
+            <Button size="sm" variant="outline" onClick={handleRunUp} disabled={!selectedNode} title={labels.runUp ?? 'Run Upstream'}>
+              ⬆️
+            </Button>
+          )}
+          {onStopGraph && (
+            <Button size="sm" variant="danger" onClick={handleStop} title={labels.stop ?? 'Stop'}>
+              ⏹ {labels.stop ?? 'Stop'}
             </Button>
           )}
         </div>
