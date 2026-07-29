@@ -375,6 +375,10 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   const [interpreterComponent, setInterpreterComponent] = useState<DAGComponentDef | null>(null);
   /** 节点右键菜单状态。 */
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: DAGNode } | null>(null);
+  /** 框选状态：起始点和当前点。 */
+  const [selectionRect, setSelectionRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  /** 多选节点 ID 集合。 */
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   /** 复制粘贴剪贴板。 */
@@ -567,9 +571,60 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
 
   const handleCanvasClick = () => {
     if (pendingConnection) return;
-    setSelectedNode(null);
-    setConnectSourceId(null);
-    if (onNodeSelect) onNodeSelect(null);
+    // 如果没有框选，清除选中
+    if (!selectionRect) {
+      setSelectedNode(null);
+      setSelectedNodeIds(new Set());
+      setConnectSourceId(null);
+      if (onNodeSelect) onNodeSelect(null);
+    }
+  };
+
+  /** 框选开始：在空白画布上按下鼠标时启动框选。 */
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (readOnly || pendingConnection) return;
+    if (e.button !== 0) return; // 只响应左键
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setSelectionRect({ x1: x, y1: y, x2: x, y2: y });
+  };
+
+  /** 框选移动：更新框选矩形并实时计算选中节点。 */
+  const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (selectionRect && canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const updated = { ...selectionRect, x2: x, y2: y };
+      setSelectionRect(updated);
+      // 计算框选范围内的节点
+      const minX = Math.min(updated.x1, updated.x2);
+      const maxX = Math.max(updated.x1, updated.x2);
+      const minY = Math.min(updated.y1, updated.y2);
+      const maxY = Math.max(updated.y1, updated.y2);
+      const ids = new Set<string>();
+      for (const n of nodes) {
+        if (n.x >= minX && n.x + 144 <= maxX && n.y >= minY && n.y + 64 <= maxY) {
+          ids.add(n.id);
+        }
+      }
+      setSelectedNodeIds(ids);
+    }
+  };
+
+  /** 框选结束：清除框选矩形，保留选中状态。 */
+  const handleCanvasMouseUp = () => {
+    if (selectionRect) {
+      // 如果框选范围太小，视为点击（清除选中）
+      const dx = Math.abs(selectionRect.x2 - selectionRect.x1);
+      const dy = Math.abs(selectionRect.y2 - selectionRect.y1);
+      if (dx < 5 && dy < 5) {
+        setSelectedNodeIds(new Set());
+      }
+      setSelectionRect(null);
+    }
   };
 
   const handleNodeClickForConnect = (node: DAGNode) => {
@@ -876,6 +931,7 @@ function formatReactChild(val: any, fallback = ''): string {
   const renderNode = (node: DAGNode) => {
     const isSelected = selectedNode?.id === node.id;
     const isConnectSource = connectSourceId === node.id;
+    const isMultiSelected = selectedNodeIds.has(node.id);
     const badge = getStatusBadge(node.status);
     return (
       <div
@@ -899,6 +955,8 @@ function formatReactChild(val: any, fallback = ''): string {
             ? 'border-blue-500 shadow-blue-500/20 ring-2 ring-blue-500/30'
             : isConnectSource
             ? 'border-amber-500 ring-2 ring-amber-500/30'
+            : isMultiSelected
+            ? 'border-blue-400 ring-1 ring-blue-400/40'
             : node.status === 'Running'
             ? 'border-cyan-500 animate-pulse shadow-cyan-500/30'
             : node.status === 'Success'
@@ -1012,9 +1070,10 @@ function formatReactChild(val: any, fallback = ''): string {
         <div
           ref={canvasRef}
           className="flex-1 bg-gray-900 relative overflow-hidden bg-[radial-gradient(#374151_1px,transparent_1px)] [background-size:16px_16px]"
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          onMouseMove={(e) => { handleMouseMove(e); handleCanvasMouseMove(e); }}
+          onMouseUp={() => { handleMouseUp(); handleCanvasMouseUp(); }}
+          onMouseLeave={() => { handleMouseUp(); handleCanvasMouseUp(); }}
+          onMouseDown={handleCanvasMouseDown}
           onClick={handleCanvasClick}
           onDragOver={(e) => {
             e.preventDefault();
@@ -1092,6 +1151,65 @@ function formatReactChild(val: any, fallback = ''): string {
           {pendingConnection && (
             <div className="absolute top-2 left-2 px-2 py-1 rounded bg-amber-900/50 text-amber-200 text-[10px] border border-amber-700/50">
               {labels.connectionHint ?? 'Connection mode: click source, then target'}
+            </div>
+          )}
+
+          {/* 框选矩形：对应原版 X6 的 rubberband 框选功能 */}
+          {selectionRect && (
+            <div
+              className="absolute border-2 border-blue-500 bg-blue-500/10 pointer-events-none z-30"
+              style={{
+                left: Math.min(selectionRect.x1, selectionRect.x2),
+                top: Math.min(selectionRect.y1, selectionRect.y2),
+                width: Math.abs(selectionRect.x2 - selectionRect.x1),
+                height: Math.abs(selectionRect.y2 - selectionRect.y1),
+              }}
+            />
+          )}
+
+          {/* 小地图导航：对应原版 X6 的 minimap 插件 */}
+          {nodes.length > 0 && (
+            <div className="absolute bottom-3 right-3 w-36 h-24 bg-gray-950/90 border border-gray-700 rounded-lg overflow-hidden shadow-lg z-20">
+              <svg width="144" height="96" viewBox={`0 0 ${Math.max(800, ...nodes.map((n) => n.x + 200))} ${Math.max(600, ...nodes.map((n) => n.y + 150))}`} className="w-full h-full">
+                {/* 连线 */}
+                {edges.map((e) => {
+                  const src = nodes.find((n) => n.id === e.source);
+                  const tgt = nodes.find((n) => n.id === e.target);
+                  if (!src || !tgt) return null;
+                  return (
+                    <line
+                      key={e.id}
+                      x1={src.x + 72}
+                      y1={src.y + 32}
+                      x2={tgt.x + 72}
+                      y2={tgt.y + 32}
+                      stroke="#4b5563"
+                      strokeWidth="2"
+                    />
+                  );
+                })}
+                {/* 节点 */}
+                {nodes.map((n) => (
+                  <rect
+                    key={n.id}
+                    x={n.x}
+                    y={n.y}
+                    width={144}
+                    height={64}
+                    rx={8}
+                    fill={n.status === 'Running' ? '#06b6d4' : n.status === 'Success' ? '#22c55e' : n.status === 'Failed' ? '#ef4444' : selectedNodeIds.has(n.id) ? '#3b82f6' : '#6b7280'}
+                    opacity={0.8}
+                  />
+                ))}
+              </svg>
+              <div className="absolute top-0.5 left-1 text-[8px] text-gray-500">Minimap</div>
+            </div>
+          )}
+
+          {/* 多选计数提示 */}
+          {selectedNodeIds.size > 1 && (
+            <div className="absolute top-2 left-2 px-2 py-1 rounded bg-blue-900/50 text-blue-200 text-[10px] border border-blue-700/50 z-20">
+              已选中 {selectedNodeIds.size} 个节点
             </div>
           )}
         </div>

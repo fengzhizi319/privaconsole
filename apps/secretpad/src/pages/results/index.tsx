@@ -16,6 +16,7 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, Button, Modal, toast, Badge } from '@secretpad/design-system';
+import { ResultVisualization } from '@secretpad/dag-next';
 import type { NodeAllResultsVO } from '@secretpad/api-client';
 import { apiClient } from '@secretpad/api-client';
 import { useTranslation } from '../../shared/lib/i18n';
@@ -323,9 +324,9 @@ export const ResultsPage: React.FC = () => {
               {detailQuery.data.output && (
                 <div>
                   <div className="font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('results.output')}</div>
-                  <pre className="bg-gray-50 dark:bg-gray-800 p-2 rounded-lg overflow-auto max-h-60 text-[10px] font-mono">
-                    {JSON.stringify(detailQuery.data.output, null, 2)}
-                  </pre>
+                  <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded-lg overflow-auto max-h-80">
+                    <ResultVisualization output={detailQuery.data.output} labels={{ noOutput: t('results.noOutput') }} />
+                  </div>
                 </div>
               )}
             </>
