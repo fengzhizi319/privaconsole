@@ -24,6 +24,12 @@ export type { ExecutionTimelineProps, ExecutionTimelineLabels, ExecutionRecord, 
 export { SqlEditor } from './sql-editor';
 export type { SqlEditorProps, SqlEditorLabels } from './sql-editor';
 
+export { TemplateQuickConfig } from './template-quick-config';
+export type { TemplateQuickConfigProps, QuickConfigLabels, QuickConfigValues, TemplateType, TableInfo } from './template-quick-config';
+
+export { BinningModification } from './binning-modification';
+export type { BinningModificationProps, BinningModificationLabels, BinningData, BinningRecord, Bin } from './binning-modification';
+
 export type DAGNodeStatus = 'Ready' | 'Running' | 'Success' | 'Failed' | 'Staging' | 'Stopped';
 
 export interface DAGNode {
