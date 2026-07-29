@@ -216,7 +216,10 @@ export const apiClient = {
       token: token,
       platformType: rawData.user?.owner_type || rawData.platformType || rawData.ownerType || 'CENTER',
       ownerType: rawData.user?.owner_type || rawData.ownerType || 'CENTER',
-      deployMode: 'CENTER',
+      // deployMode 必须是合法的 PadMode（TEE/MPC/ALL-IN-ONE）。
+      // 此前误写为 'CENTER'，useHasAccess 的 modes 校验恒为 false，
+      // 导致所有 AccessGuard 拒绝放行（如 /dag 画布退化为只读，组件无法拖拽）。
+      deployMode: 'ALL-IN-ONE',
     };
     return user;
   },

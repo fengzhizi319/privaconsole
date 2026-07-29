@@ -491,7 +491,14 @@ export const DAGPage: React.FC = () => {
     await handleNodeConfigChange(node);
   };
 
-  const { nodes, edges } = mapGraphToDAG(graphDetail || undefined);
+  // 必须 memoize：dag-next 会以 initialNodes/initialEdges 的引用变化为依据
+  // 把服务端图数据同步到画布（useEffect [initialNodes]）。若每次渲染都生成新数组，
+  // 拖入/点击添加节点后 onNodeSelect 触发父组件重渲染，会立即把画布重置回服务端状态，
+  // 表现为“拖组件到画布没有反应”。仅在 graphDetail 真正变化时才重建数组。
+  const { nodes, edges } = useMemo(
+    () => mapGraphToDAG(graphDetail || undefined),
+    [graphDetail]
+  );
 
   const hasRunningNodes = (graphDetail?.nodes || []).some((n) => n.status === 'RUNNING');
 

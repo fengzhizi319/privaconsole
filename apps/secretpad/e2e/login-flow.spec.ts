@@ -27,9 +27,9 @@ test.describe('SecretPad P0 Login & Dashboard', () => {
     await expect(page.locator('h1')).toContainText('Console Dashboard');
 
     // Sidebar navigation is visible
-    await expect(page.getByRole('button', { name: '📊 Dashboard' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '📁 Projects' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '🖥️ Nodes' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '📊 Dashboard' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '📁 Projects' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '🖥️ Nodes' })).toBeVisible();
   });
 
   test('navigates to Nodes page after login', async ({ page }) => {
@@ -42,7 +42,7 @@ test.describe('SecretPad P0 Login & Dashboard', () => {
     await expect(page.locator('h1')).toContainText('Console Dashboard');
 
     // Click Nodes in sidebar
-    await page.getByRole('button', { name: /Nodes/i }).click();
+    await page.getByRole('link', { name: /Nodes/i }).click();
     await expect(page.locator('h2')).toContainText('Kuscia Node Cluster');
   });
 
@@ -56,7 +56,7 @@ test.describe('SecretPad P0 Login & Dashboard', () => {
     await expect(page.locator('h1')).toContainText('Console Dashboard');
 
     // Click Messages in sidebar
-    await page.getByRole('button', { name: /Messages/i }).click();
+    await page.getByRole('link', { name: /Messages/i }).click();
     await expect(page.locator('h2')).toContainText('Message & Approval Center');
   });
 });

@@ -25,7 +25,8 @@ describe('apiClient.login', () => {
       platformType: 'CENTER',
       ownerType: 'CENTER',
       role: 'ADMIN',
-      deployMode: 'CENTER',
+      // 登录映射必须产出合法 PadMode；'CENTER' 会使 useHasAccess 的 modes 校验失败。
+      deployMode: 'ALL-IN-ONE',
     };
 
     mockPost.mockResolvedValueOnce({

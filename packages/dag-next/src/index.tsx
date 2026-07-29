@@ -151,6 +151,19 @@ export interface DAGCanvasProps {
 const NODE_WIDTH = 144; // w-36
 const NODE_HEIGHT = 64; // approximate
 
+/**
+ * 稳定的空值默认值：解构默认参数（如 `initialNodes = []`）会在组件每次渲染时
+ * 重新求值产生新引用，而下方 useEffect([initialNodes]) 以引用变化为依据做
+ * 「服务端 → 画布」全量同步。若宿主未传该 prop，新引用会让 effect 反复触发：
+ * 轻则把刚拖入的节点立刻冲掉，重则 setNodes(新数组) → 重渲染 → 又一新引用，
+ * 形成无限渲染循环。因此默认值一律使用模块级常量，保证引用稳定。
+ */
+const DEFAULT_NODES: DAGNode[] = [];
+const DEFAULT_EDGES: DAGEdge[] = [];
+const DEFAULT_COMPONENTS: DAGComponentDef[] = [];
+const DEFAULT_I18N_MAP: Record<string, string> = {};
+const DEFAULT_LABELS: DAGCanvasProps['labels'] = {};
+
 function getStatusBadge(status: DAGNodeStatus): { status: 'success' | 'processing' | 'error' | 'default'; label: string } {
   switch (status) {
     case 'Success':
@@ -237,11 +250,11 @@ function renderOutput(output: Record<string, any> | null, noOutputLabel = 'No ou
 
 export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   title = 'DAG Pipeline Editor',
-  initialNodes = [],
-  initialEdges = [],
-  components = [],
+  initialNodes = DEFAULT_NODES,
+  initialEdges = DEFAULT_EDGES,
+  components = DEFAULT_COMPONENTS,
   componentGroups,
-  i18nMap = {},
+  i18nMap = DEFAULT_I18N_MAP,
   readOnly = false,
   loading = false,
   onNodeSelect,
@@ -254,7 +267,7 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   onRunGraph,
   onAddNode,
   onConnect,
-  labels = {},
+  labels = DEFAULT_LABELS,
 }) => {
   const [nodes, setNodes] = useState<DAGNode[]>(initialNodes);
   const [edges, setEdges] = useState<DAGEdge[]>(initialEdges);

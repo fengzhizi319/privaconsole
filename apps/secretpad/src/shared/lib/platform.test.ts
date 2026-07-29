@@ -56,4 +56,20 @@ describe('platform guard', () => {
     );
     expect(result.current).toBe(true);
   });
+
+  it('grants access for the user shape produced by apiClient.login', () => {
+    // apiClient.login 映射出的用户（platformType='CENTER', deployMode='ALL-IN-ONE'）
+    // 必须通过 AccessGuard，否则 /dag 等页面会退化为只读。
+    setPlatform('CENTER', 'ALL-IN-ONE');
+    const { result } = renderHook(() => useHasAccess({ types: [Platform.CENTER] }));
+    expect(result.current).toBe(true);
+  });
+
+  it('denies access when deployMode is not a valid PadMode', () => {
+    // 回归：登录映射曾误把 deployMode 写成 'CENTER'，modes 校验恒为 false，
+    // 所有 AccessGuard 拒绝放行（/dag 画布只读、组件无法拖拽）。
+    setPlatform('CENTER', 'CENTER');
+    const { result } = renderHook(() => useHasAccess({ types: [Platform.CENTER] }));
+    expect(result.current).toBe(false);
+  });
 });
