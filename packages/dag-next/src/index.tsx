@@ -3,6 +3,7 @@ import { Button, Badge } from '@secretpad/design-system';
 import { AttributeForm } from './attribute-form';
 import { ComponentInterpreter } from './component-interpreter';
 import { LogViewer } from './log-viewer';
+import { ResultVisualization } from './result-visualization';
 
 // 统一导出属性动态表单，供宿主应用（如需要独立使用）引用。
 export { AttributeForm, buildAttrTree } from './attribute-form';
@@ -13,6 +14,9 @@ export type { ComponentInterpreterProps, ComponentInterpreterLabels, Interpreter
 // 统一导出日志查看器。
 export { LogViewer } from './log-viewer';
 export type { LogViewerProps, LogViewerLabels } from './log-viewer';
+// 统一导出结果可视化组件集。
+export { ResultVisualization, OutputTable, StatsChart, KeyValuePanel, CorrelationHeatmap } from './result-visualization';
+export type { ResultVisualizationProps, ResultVisualizationLabels, OutputTableProps, StatsChartProps, KeyValuePanelProps, CorrelationHeatmapProps } from './result-visualization';
 
 export type DAGNodeStatus = 'Ready' | 'Running' | 'Success' | 'Failed' | 'Staging' | 'Stopped';
 
@@ -196,56 +200,7 @@ function safeJsonParse(value: string, fallback: Record<string, any> = {}): Recor
 }
 
 function renderOutput(output: Record<string, any> | null, noOutputLabel = 'No output'): React.ReactNode {
-  if (!output) return <span className="text-gray-500">{noOutputLabel}</span>;
-  if (output.type === 'table' && output.meta && Array.isArray(output.meta.rows)) {
-    const rows = output.meta.rows as Record<string, unknown>[];
-    const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
-    return (
-      <div className="space-y-2">
-        <div className="text-gray-400 text-[10px]">type: {output.type} · codeName: {output.codeName}</div>
-        <div className="overflow-auto">
-          <table className="w-full text-left text-[10px] border border-gray-800">
-            <thead className="bg-gray-900 text-gray-400">
-              <tr>
-                {columns.map((col) => (
-                  <th key={col} className="p-2 border-b border-gray-800">{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, idx) => (
-                <tr key={idx} className="border-b border-gray-800 last:border-0">
-                  {columns.map((col) => (
-                    <td key={col} className="p-2 text-gray-300">{String(row[col] ?? '')}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  }
-  if (output.tabs && typeof output.tabs === 'object') {
-    const tabs = Object.entries(output.tabs as Record<string, unknown>);
-    return (
-      <div className="space-y-3">
-        {tabs.map(([name, content]) => (
-          <div key={name}>
-            <div className="text-gray-400 text-[10px] mb-1">{name}</div>
-            <div className="p-2 rounded bg-gray-900 border border-gray-800 font-mono text-[10px] text-gray-300 overflow-auto whitespace-pre-wrap">
-              {typeof content === 'string' ? content : safeJsonStringify(content)}
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  return (
-    <pre className="p-2 rounded bg-gray-900 border border-gray-800 font-mono text-[10px] text-gray-300 h-96 overflow-auto whitespace-pre-wrap">
-      {safeJsonStringify(output)}
-    </pre>
-  );
+  return <ResultVisualization output={output} labels={{ noOutput: noOutputLabel }} />;
 }
 
 export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
@@ -1046,7 +1001,7 @@ function formatReactChild(val: any, fallback = ''): string {
                       {labels.refresh ?? 'Refresh'}
                     </Button>
                   </div>
-                  <div className="p-2 rounded bg-gray-900 border border-gray-800 font-mono text-[10px] text-gray-300 h-96 overflow-auto whitespace-pre-wrap">
+                  <div className="p-2 rounded bg-gray-900 border border-gray-800 text-[10px] text-gray-300 max-h-96 overflow-auto">
                     {renderOutput(output, labels.noOutput)}
                   </div>
                 </div>
