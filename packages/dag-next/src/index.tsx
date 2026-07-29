@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Badge } from '@secretpad/design-system';
 import { AttributeForm } from './attribute-form';
 import { ComponentInterpreter } from './component-interpreter';
@@ -173,6 +173,14 @@ export interface DAGCanvasProps {
     searchPlaceholder?: string;
     /** 组件库搜索。 */
     paletteSearch?: string;
+    /** 撤销。 */
+    undo?: string;
+    /** 重做。 */
+    redo?: string;
+    /** 网格吸附开启。 */
+    snapOn?: string;
+    /** 网格吸附关闭。 */
+    snapOff?: string;
   };
   onNodeSelect?: (node: DAGNode | null) => void;
   onNodeMove?: (node: DAGNode) => void | Promise<void>;
@@ -395,6 +403,14 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   const [paletteSearchText, setPaletteSearchText] = useState('');
   /** 组件库分类折叠状态。 */
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  /** 撤销/重做历史栈（对应原版 X6 history 插件）。 */
+  const undoStackRef = useRef<Array<{ nodes: DAGNode[]; edges: DAGEdge[] }>>([]);
+  const redoStackRef = useRef<Array<{ nodes: DAGNode[]; edges: DAGEdge[] }>>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  /** 网格吸附开关（背景网格为 16px）。 */
+  const GRID_SIZE = 16;
+  const [snapToGrid, setSnapToGrid] = useState(true);
   const [activeTab, setActiveTab] = useState<'config' | 'log' | 'output'>('config');
   const [isDragging, setIsDragging] = useState(false);
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
@@ -452,7 +468,41 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   }, [nodes, selectedNode?.id]);
 
   /* ------------------------------------------------------------------------ */
-  /* 键盘快捷键：Delete/Cmd+C/Cmd+V/Cmd+D，对应原版 HotKeys 中的核心操作。 */
+  /* 撤销/重做：对应原版 X6 history 插件，保存画布快照。 */
+  /* ------------------------------------------------------------------------ */
+  const pushHistory = useCallback(() => {
+    undoStackRef.current.push({ nodes: [...nodes], edges: [...edges] });
+    if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+    redoStackRef.current = [];
+    setCanUndo(true);
+    setCanRedo(false);
+  }, [nodes, edges]);
+
+  const handleUndo = useCallback(() => {
+    if (undoStackRef.current.length === 0) return;
+    const prev = undoStackRef.current.pop()!;
+    redoStackRef.current.push({ nodes: [...nodes], edges: [...edges] });
+    setNodes(prev.nodes);
+    setEdges(prev.edges);
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(true);
+  }, [nodes, edges]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStackRef.current.length === 0) return;
+    const next = redoStackRef.current.pop()!;
+    undoStackRef.current.push({ nodes: [...nodes], edges: [...edges] });
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    setCanRedo(redoStackRef.current.length > 0);
+    setCanUndo(true);
+  }, [nodes, edges]);
+
+  /** 网格吸附：将坐标对齐到 GRID_SIZE 网格。 */
+  const snapValue = useCallback((v: number) => (snapToGrid ? Math.round(v / GRID_SIZE) * GRID_SIZE : v), [snapToGrid]);
+
+  /* ------------------------------------------------------------------------ */
+  /* 键盘快捷键：Delete/Cmd+C/V/D/Z，对应原版 HotKeys 中的核心操作。 */
   /* ------------------------------------------------------------------------ */
   useEffect(() => {
     if (readOnly) return;
@@ -485,6 +535,18 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
       if (isMeta && e.key === 'd' && selectedNode) {
         e.preventDefault();
         handleDuplicateNode(selectedNode);
+        return;
+      }
+      // Cmd/Ctrl+Z: 撤销
+      if (isMeta && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+      // Cmd/Ctrl+Shift+Z 或 Cmd/Ctrl+Y: 重做
+      if (isMeta && (e.key === 'Z' || e.key === 'y')) {
+        e.preventDefault();
+        handleRedo();
         return;
       }
     };
@@ -545,6 +607,7 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
     };
     setDragNodeId(node.id);
     setIsDragging(true);
+    pushHistory(); // 保存拖拽前状态
     handleSelectNode(node);
   };
 
@@ -563,6 +626,12 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
       setIsDragging(false);
       setDragNodeId(null);
       return;
+    }
+    // 网格吸附：将最终位置对齐到网格
+    if (snapToGrid) {
+      setNodes((prev) =>
+        prev.map((n) => (n.id === dragNodeId ? { ...n, x: snapValue(n.x), y: snapValue(n.y) } : n))
+      );
     }
     const moved = nodes.find((n) => n.id === dragNodeId);
     if (moved && onNodeMove) {
@@ -1213,6 +1282,19 @@ function formatReactChild(val: any, fallback = ''): string {
           <Button size="sm" variant="ghost" onClick={() => { setZoom(100); setPanOffset({ x: 0, y: 0 }); }} title="Reset View">
             🎯
           </Button>
+          {!readOnly && (
+            <>
+              <Button size="sm" variant="ghost" onClick={handleUndo} disabled={!canUndo} title={labels.undo ?? 'Undo (Ctrl+Z)'}>
+                ↩️
+              </Button>
+              <Button size="sm" variant="ghost" onClick={handleRedo} disabled={!canRedo} title={labels.redo ?? 'Redo (Ctrl+Shift+Z)'}>
+                ↪️
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSnapToGrid((s) => !s)} title={snapToGrid ? (labels.snapOn ?? 'Grid Snap: ON') : (labels.snapOff ?? 'Grid Snap: OFF')} className={snapToGrid ? 'text-cyan-400' : ''}>
+                🧲
+              </Button>
+            </>
+          )}
           <Button size="sm" variant="ghost" onClick={handleTidyLayout} title={labels.tidyLayout ?? 'Tidy Layout'}>
             📐
           </Button>
