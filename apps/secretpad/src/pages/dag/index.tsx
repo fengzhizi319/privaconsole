@@ -694,6 +694,30 @@ export const DAGPage: React.FC = () => {
               onAddNode={handleAddNode}
               onConnect={handleConnect}
               onGetComponentDef={handleGetComponentDef}
+              attrDataProvider={{
+                fetchColumns: async () => {
+                  // 从上游节点输出获取列信息（简化实现：返回空列表，待后端 API 完善）
+                  return [];
+                },
+                fetchTables: async () => {
+                  // 简化实现：返回空列表，待后端 API 完善后从项目数据表获取
+                  return [];
+                },
+                fetchModels: async () => {
+                  if (!selectedProjectId) return [];
+                  try {
+                    const models = await apiClient.getModels(selectedProjectId);
+                    return models.map((m) => ({ id: m.modelId || '', name: m.modelName || m.modelId || '' }));
+                  } catch { return []; }
+                },
+                fetchParties: async () => {
+                  // 返回默认参与方（alice/bob），待后端 API 完善后动态获取
+                  return [
+                    { id: 'alice', name: 'alice' },
+                    { id: 'bob', name: 'bob' },
+                  ];
+                },
+              }}
               loading={loading}
               labels={dagLabels}
             />

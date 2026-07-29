@@ -37,7 +37,10 @@ export type AttrTypeName =
   | 'AT_STRUCT_GROUP'
   | 'AT_UNION_GROUP'
   | 'AT_CUSTOM_PROTOBUF'
-  | 'AT_PARTY';
+  | 'AT_PARTY'
+  | 'AT_SF_TABLE_COL'
+  | 'AT_SF_TABLE'
+  | 'AT_MODEL';
 
 /** proto 枚举值 -> 枚举名 的映射，兼容后端返回数字或字符串两种形式。 */
 const ATTR_TYPE_BY_NUMBER: Record<number, AttrTypeName> = {
@@ -121,6 +124,21 @@ export interface AttributeFormLabels {
   listPlaceholder?: string;
 }
 
+/**
+ * 复合类型数据提供器：宿主应用通过此回调为列选择、表选择、模型选择等
+ * 复合控件提供候选数据。对应原版 config-item-render 中的各类 selection template。
+ */
+export interface AttrDataProvider {
+  /** 获取可选列（AT_SF_TABLE_COL），参数为属性路径，返回列名列表。 */
+  fetchColumns?: (attrPath: string) => Promise<string[]>;
+  /** 获取可选表（AT_SF_TABLE），返回 {id, name} 列表。 */
+  fetchTables?: (attrPath: string) => Promise<Array<{ id: string; name: string }>>;
+  /** 获取可选模型（AT_MODEL），返回 {id, name} 列表。 */
+  fetchModels?: (attrPath: string) => Promise<Array<{ id: string; name: string }>>;
+  /** 获取可选节点/参与方（AT_PARTY），返回 {id, name} 列表。 */
+  fetchParties?: (attrPath: string) => Promise<Array<{ id: string; name: string }>>;
+}
+
 /** 组件 Props。 */
 export interface AttributeFormProps {
   /** 后端返回的属性定义列表（ComponentDef.attrs）。 */
@@ -132,6 +150,8 @@ export interface AttributeFormProps {
   /** 任一输入变化时回调，参数为更新后的完整 nodeDef。 */
   onNodeDefChange?: (nodeDef: Record<string, unknown>) => void;
   labels?: AttributeFormLabels;
+  /** 复合类型数据提供器（列选择/表选择/模型选择/参与方选择）。 */
+  dataProvider?: AttrDataProvider;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -364,15 +384,220 @@ interface AtomicFieldProps {
   value: AttributeValue | undefined;
   readOnly?: boolean;
   labels: AttributeFormLabels;
+  dataProvider?: AttrDataProvider;
   onChange: (value: AttributeValue) => void;
 }
 
+/** 异步多选控件：支持列选择、参与方选择等需要异步加载候选项的场景。 */
+const AsyncMultiSelect: React.FC<{
+  options: string[];
+  selected: string[];
+  readOnly?: boolean;
+  placeholder?: string;
+  onChange: (list: string[]) => void;
+}> = ({ options, selected, readOnly, placeholder, onChange }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const filtered = options.filter((o) => o.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="relative">
+      {/* 已选标签 */}
+      <div
+        className="w-full min-h-[28px] p-1 rounded bg-gray-900 border border-gray-700 text-[11px] flex flex-wrap gap-1 cursor-pointer"
+        onClick={() => !readOnly && setIsOpen(!isOpen)}
+      >
+        {selected.length === 0 && <span className="text-gray-600">{placeholder ?? '点击选择...'}</span>}
+        {selected.map((item) => (
+          <span key={item} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-900/40 border border-blue-700 text-blue-300">
+            {item}
+            {!readOnly && (
+              <button
+                type="button"
+                className="text-blue-400 hover:text-red-400 ml-0.5"
+                onClick={(e) => { e.stopPropagation(); onChange(selected.filter((s) => s !== item)); }}
+              >
+                ×
+              </button>
+            )}
+          </span>
+        ))}
+      </div>
+      {/* 下拉面板 */}
+      {isOpen && !readOnly && (
+        <div className="absolute z-50 mt-1 w-full max-h-40 overflow-auto rounded border border-gray-700 bg-gray-900 shadow-xl">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索..."
+            className="w-full px-2 py-1 text-[10px] bg-gray-800 border-b border-gray-700 text-gray-200 focus:outline-none"
+            autoFocus
+          />
+          {filtered.length === 0 && <div className="px-2 py-1.5 text-[10px] text-gray-600">无匹配项</div>}
+          {filtered.map((opt) => {
+            const checked = selected.includes(opt);
+            return (
+              <label key={opt} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-800 cursor-pointer text-[10px] text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onChange(checked ? selected.filter((s) => s !== opt) : [...selected, opt])}
+                  className="w-3 h-3 rounded border-gray-600 bg-gray-800 text-blue-500"
+                />
+                {opt}
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** 异步单选控件：支持表选择、模型选择等场景。 */
+const AsyncSingleSelect: React.FC<{
+  options: Array<{ id: string; name: string }>;
+  value: string;
+  readOnly?: boolean;
+  placeholder?: string;
+  loading?: boolean;
+  onChange: (id: string) => void;
+}> = ({ options, value, readOnly, placeholder, loading, onChange }) => {
+  return (
+    <select
+      value={value}
+      disabled={readOnly || loading}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full p-1.5 rounded bg-gray-900 border border-gray-700 text-gray-200 text-[11px] focus:outline-none focus:border-blue-500 disabled:opacity-50"
+    >
+      <option value="">{loading ? '加载中...' : (placeholder ?? '请选择...')}</option>
+      {options.map((opt) => (
+        <option key={opt.id} value={opt.id}>{opt.name}</option>
+      ))}
+    </select>
+  );
+};
+
 /** 渲染单个原子属性的输入控件。 */
-const AtomicField: React.FC<AtomicFieldProps> = ({ node, value, readOnly, labels, onChange }) => {
-  const { typeName, def } = node;
+const AtomicField: React.FC<AtomicFieldProps> = ({ node, value, readOnly, labels, dataProvider, onChange }) => {
+  const { typeName, def, path } = node;
   const atomic = def.atomic;
   const allowed = valueToList(atomic?.allowed_values);
-  const isList = typeName === 'AT_STRINGS' || typeName === 'AT_INTS' || typeName === 'AT_FLOATS' || typeName === 'AT_BOOLS' || typeName === 'AT_PARTY';
+  const isList = typeName === 'AT_STRINGS' || typeName === 'AT_INTS' || typeName === 'AT_FLOATS' || typeName === 'AT_BOOLS';
+
+  // 列选择类型（AT_SF_TABLE_COL）：异步加载列名，多选标签控件。
+  const [colOptions, setColOptions] = useState<string[]>([]);
+  const [colLoading, setColLoading] = useState(false);
+  useEffect(() => {
+    if (typeName === 'AT_SF_TABLE_COL' && dataProvider?.fetchColumns) {
+      setColLoading(true);
+      dataProvider.fetchColumns(path).then((cols) => { setColOptions(cols); setColLoading(false); }).catch(() => setColLoading(false));
+    }
+  }, [typeName, path, dataProvider]);
+
+  if (typeName === 'AT_SF_TABLE_COL') {
+    const selected = valueToList(value);
+    return (
+      <div className="space-y-1">
+        {colLoading && <div className="text-[9px] text-gray-600">加载列信息...</div>}
+        <AsyncMultiSelect
+          options={colOptions}
+          selected={selected}
+          readOnly={readOnly}
+          placeholder={labels.listPlaceholder ?? '选择列...'}
+          onChange={(list) => onChange(list.length > 0 ? { ss: list, is_na: false } : naValue())}
+        />
+      </div>
+    );
+  }
+
+  // 表选择类型（AT_SF_TABLE）：异步加载表列表，单选下拉。
+  const [tableOptions, setTableOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [tableLoading, setTableLoading] = useState(false);
+  useEffect(() => {
+    if (typeName === 'AT_SF_TABLE' && dataProvider?.fetchTables) {
+      setTableLoading(true);
+      dataProvider.fetchTables(path).then((t) => { setTableOptions(t); setTableLoading(false); }).catch(() => setTableLoading(false));
+    }
+  }, [typeName, path, dataProvider]);
+
+  if (typeName === 'AT_SF_TABLE') {
+    return (
+      <AsyncSingleSelect
+        options={tableOptions}
+        value={scalarToString(value)}
+        readOnly={readOnly}
+        loading={tableLoading}
+        placeholder="选择表..."
+        onChange={(id) => onChange(id ? { s: id, is_na: false } : naValue())}
+      />
+    );
+  }
+
+  // 模型选择类型（AT_MODEL）：异步加载模型列表，单选下拉。
+  const [modelOptions, setModelOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [modelLoading, setModelLoading] = useState(false);
+  useEffect(() => {
+    if (typeName === 'AT_MODEL' && dataProvider?.fetchModels) {
+      setModelLoading(true);
+      dataProvider.fetchModels(path).then((m) => { setModelOptions(m); setModelLoading(false); }).catch(() => setModelLoading(false));
+    }
+  }, [typeName, path, dataProvider]);
+
+  if (typeName === 'AT_MODEL') {
+    return (
+      <AsyncSingleSelect
+        options={modelOptions}
+        value={scalarToString(value)}
+        readOnly={readOnly}
+        loading={modelLoading}
+        placeholder="选择模型..."
+        onChange={(id) => onChange(id ? { s: id, is_na: false } : naValue())}
+      />
+    );
+  }
+
+  // 参与方/节点选择（AT_PARTY）：异步加载参与方列表，多选标签。
+  const [partyOptions, setPartyOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [partyLoading, setPartyLoading] = useState(false);
+  useEffect(() => {
+    if (typeName === 'AT_PARTY' && dataProvider?.fetchParties) {
+      setPartyLoading(true);
+      dataProvider.fetchParties(path).then((p) => { setPartyOptions(p); setPartyLoading(false); }).catch(() => setPartyLoading(false));
+    }
+  }, [typeName, path, dataProvider]);
+
+  if (typeName === 'AT_PARTY') {
+    // 如果有 dataProvider，用多选标签；否则回退到普通列表输入。
+    if (dataProvider?.fetchParties) {
+      const selected = valueToList(value);
+      return (
+        <AsyncMultiSelect
+          options={partyOptions.map((p) => p.name || p.id)}
+          selected={selected}
+          readOnly={readOnly}
+          placeholder="选择参与方..."
+          onChange={(list) => onChange(list.length > 0 ? { ss: list, is_na: false } : naValue())}
+        />
+      );
+    }
+    // 回退：普通列表输入
+    const text = valueToList(value).join(', ');
+    return (
+      <input
+        type="text"
+        value={text}
+        disabled={readOnly}
+        placeholder={labels.listPlaceholder ?? '逗号分隔，如 alice, bob'}
+        onChange={(e) => {
+          const list = e.target.value.split(',').map((v) => v.trim()).filter((v) => v.length > 0);
+          onChange(list.length > 0 ? { ss: list, is_na: false } : naValue());
+        }}
+        className="w-full p-1.5 rounded bg-gray-900 border border-gray-700 text-gray-200 text-[11px] font-mono focus:outline-none focus:border-blue-500 disabled:opacity-50"
+      />
+    );
+  }
 
   // 布尔类型：渲染为复选框。
   if (typeName === 'AT_BOOL') {
@@ -494,12 +719,13 @@ interface RenderTreeProps {
   state: Record<string, AttributeValue>;
   readOnly?: boolean;
   labels: AttributeFormLabels;
+  dataProvider?: AttrDataProvider;
   depth: number;
   onChange: (path: string, value: AttributeValue) => void;
 }
 
 /** 递归渲染属性树（结构组折叠、联合组单选）。 */
-const RenderTree: React.FC<RenderTreeProps> = ({ nodes, state, readOnly, labels, depth, onChange }) => {
+const RenderTree: React.FC<RenderTreeProps> = ({ nodes, state, readOnly, labels, dataProvider, depth, onChange }) => {
   return (
     <div className={depth > 0 ? 'pl-3 border-l border-gray-800 space-y-3' : 'space-y-3'}>
       {nodes.map((node) => {
@@ -516,7 +742,7 @@ const RenderTree: React.FC<RenderTreeProps> = ({ nodes, state, readOnly, labels,
                 {displayName}
               </div>
               {desc && <div className="text-gray-500 text-[10px] leading-relaxed">{desc}</div>}
-              <RenderTree nodes={children} state={state} readOnly={readOnly} labels={labels} depth={depth + 1} onChange={onChange} />
+              <RenderTree nodes={children} state={state} readOnly={readOnly} labels={labels} dataProvider={dataProvider} depth={depth + 1} onChange={onChange} />
             </div>
           );
         }
@@ -551,6 +777,7 @@ const RenderTree: React.FC<RenderTreeProps> = ({ nodes, state, readOnly, labels,
                   state={state}
                   readOnly={readOnly}
                   labels={labels}
+                  dataProvider={dataProvider}
                   depth={depth + 1}
                   onChange={onChange}
                 />
@@ -578,7 +805,7 @@ const RenderTree: React.FC<RenderTreeProps> = ({ nodes, state, readOnly, labels,
               <span className="text-gray-600 text-[9px] font-mono truncate max-w-[45%]">{path}</span>
             </div>
             {desc && <div className="text-gray-500 text-[10px] leading-relaxed">{desc}</div>}
-            <AtomicField node={node} value={state[path]} readOnly={readOnly} labels={labels} onChange={(v) => onChange(path, v)} />
+            <AtomicField node={node} value={state[path]} readOnly={readOnly} labels={labels} dataProvider={dataProvider} onChange={(v) => onChange(path, v)} />
           </div>
         );
       })}
@@ -597,7 +824,7 @@ const RenderTree: React.FC<RenderTreeProps> = ({ nodes, state, readOnly, labels,
  * attrPaths/attrs，其次回退到属性定义中的 default_value。任一输入变化即
  * 重新序列化为 attrPaths/attrs 并通过 onNodeDefChange 回写宿主节点。
  */
-export const AttributeForm: React.FC<AttributeFormProps> = ({ defs, nodeDef, readOnly, onNodeDefChange, labels = {} }) => {
+export const AttributeForm: React.FC<AttributeFormProps> = ({ defs, nodeDef, readOnly, onNodeDefChange, labels = {}, dataProvider }) => {
   // 规范化属性定义列表。
   const normalizedDefs = useMemo<AttributeDef[]>(() => {
     if (!Array.isArray(defs)) return [];
@@ -658,7 +885,7 @@ export const AttributeForm: React.FC<AttributeFormProps> = ({ defs, nodeDef, rea
       <div className="text-gray-500 text-[10px] font-semibold uppercase tracking-wider mb-2">
         {labels.advanced ?? '高级配置'}
       </div>
-      <RenderTree nodes={tree} state={state} readOnly={readOnly} labels={labels} depth={0} onChange={handleChange} />
+      <RenderTree nodes={tree} state={state} readOnly={readOnly} labels={labels} dataProvider={dataProvider} depth={0} onChange={handleChange} />
     </div>
   );
 };

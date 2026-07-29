@@ -7,7 +7,7 @@ import { ResultVisualization } from './result-visualization';
 
 // 统一导出属性动态表单，供宿主应用（如需要独立使用）引用。
 export { AttributeForm, buildAttrTree } from './attribute-form';
-export type { AttributeDef, AttributeValue, AttributeFormLabels, AttributeFormProps } from './attribute-form';
+export type { AttributeDef, AttributeValue, AttributeFormLabels, AttributeFormProps, AttrDataProvider } from './attribute-form';
 // 统一导出组件解释器。
 export { ComponentInterpreter } from './component-interpreter';
 export type { ComponentInterpreterProps, ComponentInterpreterLabels, InterpreterMetadata, IoPortMeta } from './component-interpreter';
@@ -158,6 +158,8 @@ export interface DAGCanvasProps {
   onNodeLogs?: (node: DAGNode) => Promise<string[] | { status?: string; logs?: string[] }>;
   onNodeOutput?: (node: DAGNode) => Promise<Record<string, any> | null>;
   onGetComponentDef?: (node: DAGNode) => Promise<ComponentMetadata | null>;
+  /** 复合属性类型数据提供器（列选择/表选择/模型选择/参与方选择）。 */
+  attrDataProvider?: import('./attribute-form').AttrDataProvider;
   onSaveGraph?: (nodes: DAGNode[], edges: DAGEdge[]) => void | Promise<void>;
   onRunGraph?: (nodes: DAGNode[], edges: DAGEdge[]) => void | Promise<void>;
   /** 执行单节点。 */
@@ -345,6 +347,7 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   onNodeLogs,
   onNodeOutput,
   onGetComponentDef,
+  attrDataProvider,
   onSaveGraph,
   onRunGraph,
   onRunSingle,
@@ -896,6 +899,12 @@ function formatReactChild(val: any, fallback = ''): string {
             ? 'border-blue-500 shadow-blue-500/20 ring-2 ring-blue-500/30'
             : isConnectSource
             ? 'border-amber-500 ring-2 ring-amber-500/30'
+            : node.status === 'Running'
+            ? 'border-cyan-500 animate-pulse shadow-cyan-500/30'
+            : node.status === 'Success'
+            ? 'border-green-600/60'
+            : node.status === 'Failed'
+            ? 'border-red-600/60'
             : 'border-gray-800 hover:border-gray-700'
         } ${isDragging && dragNodeId === node.id ? 'cursor-grabbing' : readOnly ? 'cursor-default' : 'cursor-grab'}`}
       >
@@ -909,6 +918,15 @@ function formatReactChild(val: any, fallback = ''): string {
             <span className="text-[9px]">{badge.label}</span>
           </Badge>
         </div>
+        {/* 运行中节点显示进度条 */}
+        {node.status === 'Running' && (
+          <div className="mt-1.5 w-full bg-gray-800 rounded-full h-1 overflow-hidden">
+            <div
+              className="bg-cyan-500 h-1 rounded-full transition-all duration-500"
+              style={{ width: `${typeof node.progress === 'number' ? Math.min(100, Math.max(0, node.progress * 100)) : 50}%` }}
+            />
+          </div>
+        )}
         {!readOnly && (
           <button
             onClick={(e) => {
@@ -1168,6 +1186,7 @@ function formatReactChild(val: any, fallback = ''): string {
                             nodeDef={selectedNode.nodeDef}
                             readOnly={readOnly}
                             onNodeDefChange={handleNodeDefObjectChange}
+                            dataProvider={attrDataProvider}
                             labels={{
                               advanced: labels.advancedConfig ?? 'Advanced Config',
                               noAttrs: labels.noAttrs,
