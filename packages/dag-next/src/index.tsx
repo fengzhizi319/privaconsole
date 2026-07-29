@@ -167,6 +167,10 @@ export interface DAGCanvasProps {
     importJson?: string;
     /** 运行记录。 */
     records?: string;
+    /** 搜索。 */
+    search?: string;
+    /** 搜索占位文本。 */
+    searchPlaceholder?: string;
   };
   onNodeSelect?: (node: DAGNode | null) => void;
   onNodeMove?: (node: DAGNode) => void | Promise<void>;
@@ -382,6 +386,9 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  /** 节点搜索关键字。 */
+  const [searchText, setSearchText] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
   const [activeTab, setActiveTab] = useState<'config' | 'log' | 'output'>('config');
   const [isDragging, setIsDragging] = useState(false);
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
@@ -993,17 +1000,34 @@ function formatReactChild(val: any, fallback = ''): string {
     const x2 = tgtNode.x;
     const y2 = tgtNode.y + NODE_HEIGHT / 2;
     const cx = (x1 + x2) / 2;
+    // 连线颜色：根据源节点状态区分（对应原版 X6 连线动画）
+    const isRunning = srcNode.status === 'Running';
+    const isSuccess = srcNode.status === 'Success';
+    const isFailed = srcNode.status === 'Failed';
+    const strokeColor = isRunning ? '#06b6d4' : isSuccess ? '#22c55e' : isFailed ? '#ef4444' : '#3b82f6';
     return (
       <g key={e.id}>
         <path
           d={`M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`}
           fill="none"
-          stroke="#3b82f6"
-          strokeWidth="2"
-          strokeDasharray="4 2"
-          className="pointer-events-auto cursor-pointer hover:stroke-red-500"
+          stroke={strokeColor}
+          strokeWidth={isRunning ? 2.5 : 2}
+          strokeDasharray={isRunning ? '6 3' : '4 2'}
+          className={`pointer-events-auto cursor-pointer hover:stroke-red-500 ${isRunning ? 'animate-[dash_1s_linear_infinite]' : ''}`}
           onClick={() => handleDeleteEdge(e.id)}
         />
+        {/* 运行中连线流动动画：叠加一层透明宽路径做光晕 */}
+        {isRunning && (
+          <path
+            d={`M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`}
+            fill="none"
+            stroke="#06b6d4"
+            strokeWidth="5"
+            strokeDasharray="2 8"
+            opacity="0.3"
+            className="animate-[dash_0.8s_linear_infinite] pointer-events-none"
+          />
+        )}
       </g>
     );
   };
@@ -1013,6 +1037,13 @@ function formatReactChild(val: any, fallback = ''): string {
     const isConnectSource = connectSourceId === node.id;
     const isMultiSelected = selectedNodeIds.has(node.id);
     const badge = getStatusBadge(node.status);
+    // 搜索匹配高亮
+    const isSearchMatch = searchText.trim() !== '' && (
+      (node.name || '').toLowerCase().includes(searchText.toLowerCase()) ||
+      (node.id || '').toLowerCase().includes(searchText.toLowerCase()) ||
+      (node.codeName || '').toLowerCase().includes(searchText.toLowerCase())
+    );
+    const isSearchDimmed = searchText.trim() !== '' && !isSearchMatch;
     return (
       <div
         key={node.id}
@@ -1044,7 +1075,7 @@ function formatReactChild(val: any, fallback = ''): string {
             : node.status === 'Failed'
             ? 'border-red-600/60'
             : 'border-gray-800 hover:border-gray-700'
-        } ${isDragging && dragNodeId === node.id ? 'cursor-grabbing' : readOnly ? 'cursor-default' : 'cursor-grab'}`}
+        } ${isDragging && dragNodeId === node.id ? 'cursor-grabbing' : readOnly ? 'cursor-default' : 'cursor-grab'} ${isSearchMatch ? 'ring-2 ring-yellow-400/60 border-yellow-500' : ''} ${isSearchDimmed ? 'opacity-30' : ''}`}
       >
         <div className="flex items-center gap-2 mb-1">
           <span className="text-base">{formatReactChild(node.icon, '⚙️')}</span>
@@ -1089,6 +1120,24 @@ function formatReactChild(val: any, fallback = ''): string {
           <span className="font-semibold text-blue-400 truncate">⚡ {title}</span>
           <span className="text-gray-600">|</span>
           <span className="text-gray-400 truncate">{nodes.length} nodes · {edges.length} edges</span>
+          {/* 节点搜索：对应原版 toolbutton.tsx 中的搜索功能 */}
+          {showSearch && (
+            <input
+              type="text"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder={labels.searchPlaceholder ?? 'Search nodes...'}
+              autoFocus
+              className="w-36 px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-200 text-[10px] focus:outline-none focus:border-blue-500 placeholder-gray-500"
+            />
+          )}
+          <button
+            onClick={() => { setShowSearch((s) => !s); if (showSearch) setSearchText(''); }}
+            className="text-gray-500 hover:text-blue-400 transition-colors text-sm"
+            title={labels.search ?? 'Search'}
+          >
+            {showSearch ? '✕' : '🔍'}
+          </button>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {!readOnly && onConnect && (
@@ -1238,6 +1287,13 @@ function formatReactChild(val: any, fallback = ''): string {
           >
             {/* SVG Connecting Edges */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
+              <defs>
+                <style>{`
+                  @keyframes dash {
+                    to { stroke-dashoffset: -20; }
+                  }
+                `}</style>
+              </defs>
               {edges.map(renderEdge)}
             </svg>
 
