@@ -18,6 +18,7 @@
  *   `labels` 属性注入，保持画布包的可复用性。
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { SqlEditor } from './sql-editor';
 
 /* -------------------------------------------------------------------------- */
 /* 类型定义（与 secretflow spec component.proto 对齐）                          */
@@ -683,9 +684,22 @@ const AtomicField: React.FC<AtomicFieldProps> = ({ node, value, readOnly, labels
     );
   }
 
-  // 自定义 protobuf：渲染为 JSON 文本域。
+  // 自定义 protobuf：根据属性名判断是否使用 SQL 编辑器。
   if (typeName === 'AT_CUSTOM_PROTOBUF') {
     const text = value && !value.is_na ? (value.s ?? JSON.stringify(value)) : '';
+    // 如果属性名包含 sql/query/scql，使用 SQL 编辑器
+    const nameLC = (def.name || '').toLowerCase();
+    if (nameLC.includes('sql') || nameLC.includes('query') || nameLC.includes('scql')) {
+      return (
+        <SqlEditor
+          value={text}
+          readOnly={readOnly}
+          height={140}
+          onChange={(v) => onChange(v ? { s: v, is_na: false } : naValue())}
+          labels={{ placeholder: 'SELECT col1, col2 FROM my_table WHERE ...' }}
+        />
+      );
+    }
     return (
       <textarea
         value={text}

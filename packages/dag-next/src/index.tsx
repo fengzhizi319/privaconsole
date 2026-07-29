@@ -20,6 +20,9 @@ export type { ResultVisualizationProps, ResultVisualizationLabels, OutputTablePr
 // 统一导出执行记录时间线。
 export { ExecutionTimeline } from './execution-timeline';
 export type { ExecutionTimelineProps, ExecutionTimelineLabels, ExecutionRecord, JobStatus, PaginationInfo } from './execution-timeline';
+// 统一导出 SQL 编辑器。
+export { SqlEditor } from './sql-editor';
+export type { SqlEditorProps, SqlEditorLabels } from './sql-editor';
 
 export type DAGNodeStatus = 'Ready' | 'Running' | 'Success' | 'Failed' | 'Staging' | 'Stopped';
 
@@ -376,6 +379,9 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   const [selectedNode, setSelectedNode] = useState<DAGNode | null>(null);
   const [zoom, setZoom] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const [activeTab, setActiveTab] = useState<'config' | 'log' | 'output'>('config');
   const [isDragging, setIsDragging] = useState(false);
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
@@ -594,8 +600,15 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
     }
   };
 
-  /** 框选开始：在空白画布上按下鼠标时启动框选。 */
+  /** 框选开始 / 中键平移开始：在空白画布上按下鼠标时启动。 */
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    // 中键（滚轮键）或 Alt+左键 启动平移
+    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+      e.preventDefault();
+      setIsPanning(true);
+      panStartRef.current = { x: e.clientX, y: e.clientY, panX: panOffset.x, panY: panOffset.y };
+      return;
+    }
     if (readOnly || pendingConnection) return;
     if (e.button !== 0) return; // 只响应左键
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -603,6 +616,19 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     setSelectionRect({ x1: x, y1: y, x2: x, y2: y });
+  };
+
+  /** 平移移动：更新画布偏移。 */
+  const handlePanMove = (e: React.MouseEvent) => {
+    if (!isPanning) return;
+    const dx = e.clientX - panStartRef.current.x;
+    const dy = e.clientY - panStartRef.current.y;
+    setPanOffset({ x: panStartRef.current.panX + dx, y: panStartRef.current.panY + dy });
+  };
+
+  /** 平移结束。 */
+  const handlePanEnd = () => {
+    setIsPanning(false);
   };
 
   /** 框选移动：更新框选矩形并实时计算选中节点。 */
@@ -1080,6 +1106,9 @@ function formatReactChild(val: any, fallback = ''): string {
           <Button size="sm" variant="ghost" onClick={() => setZoom((z) => Math.max(50, z - 10))}>🔍 -</Button>
           <span className="font-mono text-gray-400 text-xs w-10 text-center">{zoom}%</span>
           <Button size="sm" variant="ghost" onClick={() => setZoom((z) => Math.min(150, z + 10))}>🔍 +</Button>
+          <Button size="sm" variant="ghost" onClick={() => { setZoom(100); setPanOffset({ x: 0, y: 0 }); }} title="Reset View">
+            🎯
+          </Button>
           <Button size="sm" variant="ghost" onClick={handleTidyLayout} title={labels.tidyLayout ?? 'Tidy Layout'}>
             📐
           </Button>
@@ -1135,11 +1164,17 @@ function formatReactChild(val: any, fallback = ''): string {
         <div
           ref={canvasRef}
           className="flex-1 bg-gray-900 relative overflow-hidden bg-[radial-gradient(#374151_1px,transparent_1px)] [background-size:16px_16px]"
-          onMouseMove={(e) => { handleMouseMove(e); handleCanvasMouseMove(e); }}
-          onMouseUp={() => { handleMouseUp(); handleCanvasMouseUp(); }}
-          onMouseLeave={() => { handleMouseUp(); handleCanvasMouseUp(); }}
+          onMouseMove={(e) => { handleMouseMove(e); handleCanvasMouseMove(e); handlePanMove(e); }}
+          onMouseUp={() => { handleMouseUp(); handleCanvasMouseUp(); handlePanEnd(); }}
+          onMouseLeave={() => { handleMouseUp(); handleCanvasMouseUp(); handlePanEnd(); }}
           onMouseDown={handleCanvasMouseDown}
           onClick={handleCanvasClick}
+          onWheel={(e) => {
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              setZoom((z) => Math.min(150, Math.max(50, z + (e.deltaY > 0 ? -5 : 5))));
+            }
+          }}
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'copy';
@@ -1194,15 +1229,21 @@ function formatReactChild(val: any, fallback = ''): string {
               handleSelectNode(newNode);
             })().catch((err) => console.error('Failed to add dropped component:', err));
           }}
-          style={{ cursor: pendingConnection ? 'crosshair' : 'default' }}
+          style={{ cursor: isPanning ? 'grabbing' : pendingConnection ? 'crosshair' : 'default' }}
         >
-          {/* SVG Connecting Edges */}
-          <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
-            {edges.map(renderEdge)}
-          </svg>
+          {/* 平移+缩放容器：对应原版 X6 的 graph.translate / graph.zoom */}
+          <div
+            className="absolute origin-top-left"
+            style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom / 100})`, width: '100%', height: '100%' }}
+          >
+            {/* SVG Connecting Edges */}
+            <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
+              {edges.map(renderEdge)}
+            </svg>
 
-          {/* Render Nodes */}
-          {nodes.map(renderNode)}
+            {/* Render Nodes */}
+            {nodes.map(renderNode)}
+          </div>
 
           {nodes.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
