@@ -171,6 +171,8 @@ export interface DAGCanvasProps {
     search?: string;
     /** 搜索占位文本。 */
     searchPlaceholder?: string;
+    /** 组件库搜索。 */
+    paletteSearch?: string;
   };
   onNodeSelect?: (node: DAGNode | null) => void;
   onNodeMove?: (node: DAGNode) => void | Promise<void>;
@@ -389,6 +391,10 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   /** 节点搜索关键字。 */
   const [searchText, setSearchText] = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  /** 组件库搜索关键字。 */
+  const [paletteSearchText, setPaletteSearchText] = useState('');
+  /** 组件库分类折叠状态。 */
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'config' | 'log' | 'output'>('config');
   const [isDragging, setIsDragging] = useState(false);
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
@@ -939,16 +945,53 @@ function formatReactChild(val: any, fallback = ''): string {
   return String(val);
 }
 
-  const renderComponentPalette = () => (
+  const renderComponentPalette = () => {
+    // 组件库搜索过滤（对应原版 component-tree/components/search-input）
+    const paletteFilter = (paletteSearchText || '').toLowerCase();
+    const filteredGroups = Object.entries(groups).map(([group, items]) => {
+      if (!paletteFilter) return [group, items] as const;
+      const filtered = items.filter((c) => {
+        const codeName = `${c.domain}/${c.name}`;
+        const label = i18nMap[c.name] || i18nMap[codeName] || c.name;
+        return (
+          String(label).toLowerCase().includes(paletteFilter) ||
+          c.name.toLowerCase().includes(paletteFilter) ||
+          group.toLowerCase().includes(paletteFilter)
+        );
+      });
+      return [group, filtered] as const;
+    }).filter(([, items]) => items.length > 0);
+
+    return (
     <div className="w-56 bg-gray-950/80 border-r border-gray-800 flex flex-col">
       <div className="p-3 border-b border-gray-800 font-semibold text-xs text-gray-400 uppercase tracking-wider">
         {labels.operatorLibrary ?? 'Operator Library'}
       </div>
+      {/* 组件搜索框：对应原版 SearchInput */}
+      <div className="px-2 py-1.5 border-b border-gray-800">
+        <input
+          type="text"
+          value={paletteSearchText}
+          onChange={(e) => setPaletteSearchText(e.target.value)}
+          placeholder={labels.paletteSearch ?? 'Search operators...'}
+          className="w-full px-2 py-1 rounded bg-gray-900 border border-gray-700 text-gray-200 text-[10px] focus:outline-none focus:border-blue-500 placeholder-gray-600"
+        />
+      </div>
       <div className="flex-1 overflow-y-auto p-2 space-y-4 text-xs">
-        {Object.entries(groups).map(([group, items]) => (
+        {filteredGroups.map(([group, items]) => (
           <div key={group}>
-            <div className="px-2 py-1 text-gray-500 font-semibold uppercase text-[10px]">{group}</div>
-            {items.map((component, idx) => {
+            <div
+              className="px-2 py-1 text-gray-500 font-semibold uppercase text-[10px] cursor-pointer hover:text-gray-300 flex items-center justify-between select-none"
+              onClick={() => setCollapsedGroups((prev) => {
+                const next = new Set(prev);
+                if (next.has(group)) next.delete(group); else next.add(group);
+                return next;
+              })}
+            >
+              <span>{group}</span>
+              <span className="text-gray-600">{collapsedGroups.has(group) ? '▶' : '▼'} {items.length}</span>
+            </div>
+            {!collapsedGroups.has(group) && items.map((component, idx) => {
               const codeName = `${component.domain}/${component.name}`;
               const rawLabel = i18nMap[component.name] || i18nMap[codeName] || component.name;
               const label = formatReactChild(rawLabel, component.name);
@@ -984,12 +1027,13 @@ function formatReactChild(val: any, fallback = ''): string {
             })}
           </div>
         ))}
-        {Object.keys(groups).length === 0 && (
+        {filteredGroups.length === 0 && (
           <div className="text-gray-600 px-2">{labels.noOperators ?? 'No operators available'}</div>
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   const renderEdge = (e: DAGEdge) => {
     const srcNode = nodes.find((n) => n.id === e.source);
@@ -1061,7 +1105,7 @@ function formatReactChild(val: any, fallback = ''): string {
           }
         }}
         style={{ left: `${node.x}px`, top: `${node.y}px` }}
-        className={`absolute w-36 p-3 rounded-lg bg-gray-950 border-2 shadow-lg transition-all z-10 select-none ${
+        className={`absolute w-36 p-3 rounded-lg bg-gray-950 border-2 shadow-lg transition-all z-10 select-none group ${
           isSelected
             ? 'border-blue-500 shadow-blue-500/20 ring-2 ring-blue-500/30'
             : isConnectSource
@@ -1096,6 +1140,17 @@ function formatReactChild(val: any, fallback = ''): string {
             />
           </div>
         )}
+        {/* 悬停详情 tooltip：对应原版 Popover 显示组件文档 */}
+        <div className="absolute left-full top-0 ml-2 hidden group-hover:block z-50 pointer-events-none">
+          <div className="bg-gray-950 border border-gray-700 rounded-lg p-2.5 shadow-xl text-[10px] text-gray-300 w-44">
+            <div className="font-semibold text-gray-100 mb-1">{formatReactChild(node.name, 'Node')}</div>
+            {node.codeName && <div className="text-gray-500 mb-0.5">ID: {node.codeName}</div>}
+            <div className="text-gray-500">Status: <span className={node.status === 'Success' ? 'text-green-400' : node.status === 'Failed' ? 'text-red-400' : node.status === 'Running' ? 'text-cyan-400' : 'text-gray-400'}>{node.status}</span></div>
+            {((node.inputs?.length ?? 0) > 0 || (node.outputs?.length ?? 0) > 0) && (
+              <div className="text-gray-500 mt-0.5">I/O: {node.inputs?.length || 0} in · {node.outputs?.length || 0} out</div>
+            )}
+          </div>
+        </div>
         {!readOnly && (
           <button
             onClick={(e) => {
