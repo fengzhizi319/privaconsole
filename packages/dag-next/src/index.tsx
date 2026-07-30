@@ -4,6 +4,8 @@ import { AttributeForm } from './attribute-form';
 import { ComponentInterpreter } from './component-interpreter';
 import { LogViewer } from './log-viewer';
 import { ResultVisualization } from './result-visualization';
+import { BinningModification } from './binning-modification';
+import type { BinningData } from './binning-modification';
 
 // 统一导出属性动态表单，供宿主应用（如需要独立使用）引用。
 export { AttributeForm, buildAttrTree } from './attribute-form';
@@ -187,6 +189,8 @@ export interface DAGCanvasProps {
     snapOn?: string;
     /** 网格吸附关闭。 */
     snapOff?: string;
+    /** Binning 修改器标签页。 */
+    binningTab?: string;
   };
   onNodeSelect?: (node: DAGNode | null) => void;
   onNodeMove?: (node: DAGNode) => void | Promise<void>;
@@ -194,6 +198,10 @@ export interface DAGCanvasProps {
   onNodeLogs?: (node: DAGNode) => Promise<string[] | { status?: string; logs?: string[] }>;
   onNodeOutput?: (node: DAGNode) => Promise<Record<string, any> | null>;
   onGetComponentDef?: (node: DAGNode) => Promise<ComponentMetadata | null>;
+  /** 获取节点 binning 数据（仅对分箱类组件调用）。 */
+  onNodeBinningData?: (node: DAGNode) => Promise<BinningData | null>;
+  /** 保存修改后的 binning 数据。 */
+  onSaveBinningData?: (node: DAGNode, data: BinningData) => void | Promise<void>;
   /** 复合属性类型数据提供器（列选择/表选择/模型选择/参与方选择）。 */
   attrDataProvider?: import('./attribute-form').AttrDataProvider;
   onSaveGraph?: (nodes: DAGNode[], edges: DAGEdge[]) => void | Promise<void>;
@@ -383,6 +391,8 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   onNodeLogs,
   onNodeOutput,
   onGetComponentDef,
+  onNodeBinningData,
+  onSaveBinningData,
   attrDataProvider,
   onSaveGraph,
   onRunGraph,
@@ -417,7 +427,8 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
   /** 网格吸附开关（背景网格为 16px）。 */
   const GRID_SIZE = 16;
   const [snapToGrid, setSnapToGrid] = useState(true);
-  const [activeTab, setActiveTab] = useState<'config' | 'log' | 'output'>('config');
+  const [activeTab, setActiveTab] = useState<'config' | 'log' | 'output' | 'binning'>('config');
+  const [binningData, setBinningData] = useState<BinningData | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
   const [connectSourceId, setConnectSourceId] = useState<string | null>(null);
@@ -866,10 +877,30 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
     }
   };
 
-  const handleTabChange = (tab: 'config' | 'log' | 'output') => {
+  /** 加载 binning 数据（分箱类组件专用）。 */
+  const handleLoadBinningData = async () => {
+    if (!selectedNode || !onNodeBinningData) return;
+    setPanelLoading(true);
+    try {
+      const result = await onNodeBinningData(selectedNode);
+      setBinningData(result);
+    } finally {
+      setPanelLoading(false);
+    }
+  };
+
+  /** 判断当前选中节点是否为分箱类组件。 */
+  const isBinningNode = (node: DAGNode | null): boolean => {
+    if (!node) return false;
+    const cn = (node.codeName || node.id || '').toLowerCase();
+    return cn.includes('binning') || cn.includes('woe') || cn.includes('vert_bin');
+  };
+
+  const handleTabChange = (tab: 'config' | 'log' | 'output' | 'binning') => {
     setActiveTab(tab);
     if (tab === 'log') handleLoadLogs();
     if (tab === 'output') handleLoadOutput();
+    if (tab === 'binning') handleLoadBinningData();
   };
 
   const handleRun = async () => {
@@ -1545,6 +1576,14 @@ function formatReactChild(val: any, fallback = ''): string {
                   {labels.output ?? 'Output'}
                 </button>
               )}
+              {onNodeBinningData && isBinningNode(selectedNode) && (
+                <button
+                  onClick={() => handleTabChange('binning')}
+                  className={`flex-1 py-3 text-center border-b-2 ${activeTab === 'binning' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400'}`}
+                >
+                  {labels.binningTab ?? 'Binning'}
+                </button>
+              )}
             </div>
 
             <div className="p-4 flex-1 overflow-y-auto text-xs space-y-4">
@@ -1715,6 +1754,34 @@ function formatReactChild(val: any, fallback = ''): string {
                   <div className="p-2 rounded bg-gray-900 border border-gray-800 text-[10px] text-gray-300 max-h-96 overflow-auto">
                     {renderOutput(output, labels.noOutput)}
                   </div>
+                </div>
+              )}
+
+              {activeTab === 'binning' && (
+                <div className="space-y-2 h-full flex flex-col min-h-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">{labels.binningTab ?? 'Binning Modification'}</span>
+                    <Button size="sm" variant="ghost" onClick={handleLoadBinningData} loading={panelLoading}>
+                      {labels.refresh ?? 'Refresh'}
+                    </Button>
+                  </div>
+                  {binningData ? (
+                    <div className="flex-1 min-h-0">
+                      <BinningModification
+                        data={binningData}
+                        onSave={async (data) => {
+                          if (selectedNode && onSaveBinningData) {
+                            await onSaveBinningData(selectedNode, data);
+                          }
+                        }}
+                        readOnly={readOnly}
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-gray-500 text-center py-8">
+                      {panelLoading ? 'Loading...' : 'No binning data available'}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
