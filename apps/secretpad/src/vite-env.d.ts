@@ -31,6 +31,13 @@ interface ImportMetaEnv {
    * 通常由 CI 在构建时注入（如 git commit sha 或语义化版本）。
    */
   readonly VITE_APP_VERSION?: string;
+
+  /**
+   * Web Vitals 指标上报端点（opt-in）。未设置时不发起任何上报请求。
+   * 必须是无需 Cookie 会话 / CSRF 的采集服务（sendBeacon 无法携带
+   * `X-CSRF-Token`），跨域时还需在 CSP `connect-src` 中放行。
+   */
+  readonly VITE_WEB_VITALS_ENDPOINT?: string;
 }
 
 interface ImportMeta {

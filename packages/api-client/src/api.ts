@@ -1,6 +1,18 @@
 import createClient from 'openapi-fetch';
 import type { paths } from './generated/secretpad';
 import { ownerFieldFor, storedDataResourceUser, withDataResourceOwner } from './data-resource';
+import {
+  CHANGE_PASSWORD_PATH,
+  CSRF_HEADER,
+  PASSWORD_CHANGE_REQUIRED_CODE,
+  SESSION_MODE_HEADER,
+  clearStoredSession,
+  isAuthPath,
+  isStateChanging,
+  migrateLegacyTokenStorage,
+  readCsrfToken,
+  refreshSession,
+} from './session';
 
 // Avoid coupling the shared API client to Vite's import.meta typings.
 // Paths in the generated client already include the `/api` prefix (e.g. `/api/login`,
@@ -14,7 +26,12 @@ export const api = createClient<paths>({
   headers: {
     'Content-Type': 'application/json',
   },
+  // The session is an HttpOnly cookie: send it (also to a cross-origin API base).
+  credentials: 'include',
 });
+
+// Older builds kept the bearer token in localStorage: drop it on load.
+migrateLegacyTokenStorage();
 
 function generateTraceId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -65,26 +82,65 @@ async function ensureDataResourceOwner(request: Request): Promise<Request> {
   return new Request(request, { body: JSON.stringify(next) });
 }
 
+/** Clones of in-flight requests, so a request can be replayed once after a refresh. */
+const replayable = new WeakMap<Request, Request>();
+
+function redirectTo(path: string) {
+  if (typeof window === 'undefined') return;
+  if (window.location.pathname === path) return;
+  // Use replace so the broken route is not kept in the history stack.
+  window.location.replace(path);
+}
+
+async function isPasswordChangeRequired(response: Response): Promise<boolean> {
+  if (response.status !== 403) return false;
+  try {
+    const body = (await response.clone().json()) as { status?: { code?: number } };
+    return body?.status?.code === PASSWORD_CHANGE_REQUIRED_CODE;
+  } catch {
+    return false;
+  }
+}
+
 api.use({
   async onRequest({ request }) {
-    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('secretpad-token') : null;
-    if (token) {
-      request.headers.set('User-Token', token);
-      request.headers.set('Authorization', `Bearer ${token}`);
-    }
     request.headers.set('Trace-Id', generateTraceId());
-    return ensureDataResourceOwner(request);
+    const path = new URL(request.url, 'http://local').pathname;
+    if (isAuthPath(path)) {
+      // Browser session: tokens only as HttpOnly cookies, never in the body.
+      request.headers.set(SESSION_MODE_HEADER, 'cookie');
+    }
+    if (isStateChanging(request.method)) {
+      const csrf = readCsrfToken();
+      if (csrf) request.headers.set(CSRF_HEADER, csrf);
+    }
+    const next = await ensureDataResourceOwner(request);
+    if (!isAuthPath(path)) {
+      try {
+        replayable.set(next, next.clone());
+      } catch {
+        /* body not clonable */
+      }
+    }
+    return next;
   },
-  onResponse({ response }) {
-    if (response.status === 401) {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('secretpad-token');
-        localStorage.removeItem('secretpad-user');
+  async onResponse({ request, response }) {
+    const path = new URL(request.url, 'http://local').pathname;
+    if (response.status === 401 && !isAuthPath(path)) {
+      // Access token expired: rotate once with the refresh cookie and replay.
+      const replay = replayable.get(request);
+      if (replay && (await refreshSession(API_BASE_URL))) {
+        if (isStateChanging(replay.method)) {
+          const csrf = readCsrfToken();
+          if (csrf) replay.headers.set(CSRF_HEADER, csrf);
+        }
+        const retried = await fetch(replay, { credentials: 'include' });
+        if (retried.status !== 401) return rewriteRateLimited(retried);
       }
-      if (typeof window !== 'undefined') {
-        // Use replace so the broken route is not kept in the history stack.
-        window.location.replace('/login');
-      }
+      clearStoredSession();
+      redirectTo('/login');
+    } else if (await isPasswordChangeRequired(response)) {
+      redirectTo(CHANGE_PASSWORD_PATH);
     }
     return rewriteRateLimited(response);
   },

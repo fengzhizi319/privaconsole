@@ -10,8 +10,10 @@ import * as data from './data';
 import * as workflow from './workflow';
 import * as nodes from './nodes';
 import * as dag from './dag';
+import * as audit from './audit';
+import * as authExt from './auth';
 
-const areas: { zh: Dictionary; en: Dictionary }[] = [platform, projects, data, workflow, nodes, dag];
+const areas: { zh: Dictionary; en: Dictionary }[] = [platform, projects, data, workflow, nodes, dag, audit, authExt];
 
 export const extZh: Dictionary[] = areas.map((a) => a.zh);
 export const extEn: Dictionary[] = areas.map((a) => a.en);

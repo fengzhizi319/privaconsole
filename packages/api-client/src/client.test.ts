@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 
 describe('apiClient.login', () => {
-  it('stores the returned token and returns the user', async () => {
+  it('never persists the returned token and returns the user', async () => {
     const user = {
       token: 'abc123',
       name: 'admin',
@@ -36,8 +36,9 @@ describe('apiClient.login', () => {
     } as any);
 
     const result = await apiClient.login('admin', 'hash', 'sm3hash');
-    expect(result).toMatchObject(user);
-    expect(localStorage.getItem('secretpad-token')).toBe('abc123');
+    expect(result).toMatchObject({ ...user, token: '' });
+    // The session is the HttpOnly cookie; a body token is ignored.
+    expect(localStorage.getItem('secretpad-token')).toBeNull();
     expect(mockPost).toHaveBeenCalledWith('/api/login', {
       body: { name: 'admin', passwordHash: 'hash', passwordHashSm3: 'sm3hash' },
     });
@@ -67,7 +68,8 @@ describe('apiClient.login', () => {
         response: new Response(),
       } as any);
     const result = await apiClient.login('admin', 'hash');
-    expect(result.token).toBe('x');
+    expect(result.token).toBe('');
+    expect(result.name).toBe('admin');
     expect(mockPost).toHaveBeenLastCalledWith('/api/v1alpha1/user/login', {
       body: { name: 'admin', passwordHash: 'hash', password: 'hash' },
     });
@@ -143,11 +145,13 @@ describe('apiClient.getDataSources', () => {
 });
 
 describe('apiClient.logout', () => {
-  it('clears the stored token', async () => {
+  it('clears the stored session marker and any legacy token', async () => {
     localStorage.setItem('secretpad-token', 'abc');
+    localStorage.setItem('secretpad-user', '{}');
     mockPost.mockResolvedValueOnce({ data: { status: { code: 0 } }, error: undefined, response: new Response() } as any);
     await apiClient.logout();
     expect(localStorage.getItem('secretpad-token')).toBeNull();
+    expect(localStorage.getItem('secretpad-user')).toBeNull();
   });
 });
 

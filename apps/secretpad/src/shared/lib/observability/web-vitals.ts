@@ -12,11 +12,15 @@ import { captureException } from './sentry';
  * - **LCP**（Largest Contentful Paint）：最大内容绘制，衡量加载性能。
  *
  * 上报策略：
- * 1. 开发环境（DEV）：以 `console.info` 输出到控制台，便于本地调优，
- *    不产生任何网络请求。
- * 2. 生产环境：通过 `navigator.sendBeacon` 上报到 `/api/v1alpha1/v1/metrics`
- *    （如后端提供该端点）；同时把「较差」的指标作为 breadcrumb/异常
- *    线索交给 Sentry，便于与错误关联分析。
+ * 1. 开发环境（DEV）：以 `console.info` 输出到控制台，便于本地调优。
+ * 2. 后端上报为**显式开启**（opt-in）：仅当构建时设置了
+ *    `VITE_WEB_VITALS_ENDPOINT` 才通过 `navigator.sendBeacon` 上报；
+ *    未设置（默认）时**不产生任何网络请求**。
+ *    - Privahub 后端没有指标采集端点（旧的 `/api/v1alpha1/v1/metrics` 并不存在，
+ *      只会 404）；而且 `/api/**` 走 Cookie 会话 + CSRF 校验，sendBeacon 无法携带
+ *      `X-CSRF-Token` 头，会被拒绝。因此端点应是一个无需会话的独立采集服务，
+ *      并需同步放开 CSP 的 `connect-src`。
+ *    - 同时把「较差」的指标作为异常线索交给 Sentry（未配置 DSN 时为 no-op）。
  * 3. 所有上报均为「尽力而为」，任何失败都被静默吞掉，绝不影响业务。
  */
 
@@ -31,12 +35,24 @@ const POOR_THRESHOLDS: Record<string, number> = {
 };
 
 /**
- * 将单条指标上报到后端（尽力而为）。
+ * 返回配置的 Web Vitals 上报端点；未配置（或为空白）时返回 undefined。
+ * 在调用时读取，便于测试通过 `vi.stubEnv` 切换。
+ */
+function webVitalsEndpoint(): string | undefined {
+  const endpoint = import.meta.env.VITE_WEB_VITALS_ENDPOINT?.trim();
+  return endpoint ? endpoint : undefined;
+}
+
+/**
+ * 将单条指标上报到 `VITE_WEB_VITALS_ENDPOINT`（尽力而为）。
  * 使用 sendBeacon 以保证在页面卸载时也能可靠送达，且不阻塞主线程。
+ * 未配置端点时直接返回，不发起任何请求。
  *
  * @param metric web-vitals 提供的指标对象
  */
 function reportToBackend(metric: Metric): void {
+  const endpoint = webVitalsEndpoint();
+  if (!endpoint) return;
   // 仅在浏览器支持 sendBeacon 时尝试上报，否则直接放弃（降级）。
   if (typeof navigator === 'undefined' || !navigator.sendBeacon) return;
 
@@ -50,11 +66,7 @@ function reportToBackend(metric: Metric): void {
   });
 
   try {
-    // 端点可由后端按需实现；不存在时 sendBeacon 仅静默失败，无副作用。
-    navigator.sendBeacon(
-      '/api/v1alpha1/v1/metrics',
-      new Blob([payload], { type: 'application/json' })
-    );
+    navigator.sendBeacon(endpoint, new Blob([payload], { type: 'application/json' }));
   } catch {
     // 上报失败不应影响用户体验，静默忽略。
   }
@@ -74,10 +86,8 @@ function handleMetric(metric: Metric): void {
     );
   }
 
-  // 生产环境上报到后端。
-  if (import.meta.env.PROD) {
-    reportToBackend(metric);
-  }
+  // 仅在显式配置 VITE_WEB_VITALS_ENDPOINT 时上报（默认不发请求）。
+  reportToBackend(metric);
 
   // 对「较差」的指标额外记录一条异常线索，便于在 Sentry 中关联分析。
   const threshold = POOR_THRESHOLDS[metric.name];

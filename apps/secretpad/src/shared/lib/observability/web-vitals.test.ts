@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Metric } from 'web-vitals';
 
 // mock ./sentry，隔离对 Sentry 的依赖，仅断言较差指标是否触发上报。
@@ -44,6 +44,11 @@ const callbackOf = (spy: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 describe('reportWebVitals', () => {
@@ -93,5 +98,64 @@ describe('reportWebVitals', () => {
     onInp(makeMetric('INP', 600));
 
     expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  describe('后端上报（VITE_WEB_VITALS_ENDPOINT，opt-in）', () => {
+    const stubBeacon = () => {
+      const sendBeacon = vi.fn(() => true);
+      vi.stubGlobal('navigator', { ...globalThis.navigator, sendBeacon });
+      return sendBeacon;
+    };
+
+    it('未配置端点时不发起任何网络请求', () => {
+      vi.stubEnv('VITE_WEB_VITALS_ENDPOINT', '');
+      const sendBeacon = stubBeacon();
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      reportWebVitals();
+
+      callbackOf(onLCP)(makeMetric('LCP', 2000));
+      callbackOf(onCLS)(makeMetric('CLS', 0.4));
+
+      expect(sendBeacon).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('空白端点视为未配置', () => {
+      vi.stubEnv('VITE_WEB_VITALS_ENDPOINT', '   ');
+      const sendBeacon = stubBeacon();
+      reportWebVitals();
+
+      callbackOf(onINP)(makeMetric('INP', 100));
+
+      expect(sendBeacon).not.toHaveBeenCalled();
+    });
+
+    it('配置端点后通过 sendBeacon 上报到该端点', () => {
+      vi.stubEnv('VITE_WEB_VITALS_ENDPOINT', 'https://telemetry.example.com/vitals');
+      const sendBeacon = stubBeacon();
+      reportWebVitals();
+
+      callbackOf(onLCP)(makeMetric('LCP', 2000));
+
+      expect(sendBeacon).toHaveBeenCalledTimes(1);
+      expect(sendBeacon).toHaveBeenCalledWith(
+        'https://telemetry.example.com/vitals',
+        expect.any(Blob)
+      );
+    });
+
+    it('不再上报到不存在的 /api/v1alpha1/v1/metrics', () => {
+      vi.stubEnv('VITE_WEB_VITALS_ENDPOINT', '');
+      const sendBeacon = stubBeacon();
+      reportWebVitals();
+
+      callbackOf(onLCP)(makeMetric('LCP', 2000));
+
+      expect(sendBeacon).not.toHaveBeenCalledWith(
+        '/api/v1alpha1/v1/metrics',
+        expect.anything()
+      );
+    });
   });
 });

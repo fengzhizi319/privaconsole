@@ -3,6 +3,7 @@ import { createRootRoute, createRoute, createRouter, redirect } from '@tanstack/
 
 import { AppLayout } from './app/AppLayout';
 import { LoginRouteComponent, RootComponent, RouteErrorComponent } from './app/route-components';
+import { hasStoredSession } from '@secretpad/api-client';
 import { getStoredUser } from './features/auth/model/auth-store';
 import { resolveMyNodeId, toPlatformContext } from './shared/lib/platform';
 import { canAccessPath, resolveHomePath, type HomeTarget } from './shared/lib/access';
@@ -43,15 +44,21 @@ const AllDataSourcesPage = lazyPage(() => import('./pages/all-data'), 'AllDataSo
 const AllDataTablesPage = lazyPage(() => import('./pages/all-data'), 'AllDataTablesPage');
 const InstRegisterPage = lazyPage(() => import('./pages/institutions/register'), 'InstRegisterPage');
 const PeriodicTaskDetailPage = lazyPage(() => import('./pages/periodic-tasks/detail'), 'PeriodicTaskDetailPage');
+const AuditLogPage = lazyPage(() => import('./pages/audit'), 'AuditLogPage');
+
+const ChangePasswordPage = lazyPage(() => import('./pages/change-password'), 'ChangePasswordPage');
 
 /**
- * Read the auth token directly from localStorage (not the Zustand store).
- * The store is a module-level singleton whose `isAuthenticated` snapshot is taken
- * at import time; in tests the token is written to localStorage afterwards, so
- * the store value would be stale. Reading localStorage at navigation time is
- * always current.
+ * Whether the browser holds a session. The session credential itself is an
+ * HttpOnly cookie (unreadable by JS); the persisted non-secret user context
+ * is the login marker. Read at navigation time (not the Zustand snapshot) so
+ * it is always current; an expired cookie session is caught by the 401
+ * handling of the API client.
  */
-const getAuthToken = () => localStorage.getItem('secretpad-token');
+const getAuthToken = () => hasStoredSession();
+
+/** The session is restricted to the password change (initial / reset password). */
+const mustChangePassword = () => getStoredUser()?.mustChangePassword === true;
 
 /** Platform context of the persisted user (sync; refreshed by AppLayout via user/get). */
 const storedContext = () => toPlatformContext(getStoredUser());
@@ -88,10 +95,21 @@ export const loginRoute = createRoute({
   path: '/login',
   beforeLoad: () => {
     if (getAuthToken()) {
+      if (mustChangePassword()) throw redirect({ to: '/change-password' });
       throw redirectTo(resolveHomePath(storedContext()));
     }
   },
   component: LoginRouteComponent,
+});
+
+/** Forced password change, outside the app layout (sandboxed session). */
+export const changePasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/change-password',
+  beforeLoad: () => {
+    if (!getAuthToken()) throw redirect({ to: '/login' });
+  },
+  component: ChangePasswordPage,
 });
 
 export const appRoute = createRoute({
@@ -100,6 +118,9 @@ export const appRoute = createRoute({
   beforeLoad: ({ location }) => {
     if (!getAuthToken()) {
       throw redirect({ to: '/login' });
+    }
+    if (mustChangePassword()) {
+      throw redirect({ to: '/change-password' });
     }
     // Route-level guard per platformType / ownerType (legacy *-auth wrappers).
     const ctx = storedContext();
@@ -319,6 +340,13 @@ export const instRegisterRoute = createRoute({
   component: InstRegisterPage,
 });
 
+/** Security audit trail (ADMIN / AUDITOR; enforced by the backend). */
+export const auditRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/audit',
+  component: AuditLogPage,
+});
+
 /** Node-context view (legacy `/node?ownerId=`): tabs scoped to one node. */
 export const nodeLayoutRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -364,6 +392,7 @@ export const nodeResultsRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
+  changePasswordRoute,
   appRoute.addChildren([
     indexRoute,
     dashboardRoute,
@@ -394,6 +423,7 @@ const routeTree = rootRoute.addChildren([
     allDataSourcesRoute,
     allDataTablesRoute,
     instRegisterRoute,
+    auditRoute,
     nodeLayoutRoute.addChildren([
       nodeIndexRoute,
       nodeDataSourcesRoute,

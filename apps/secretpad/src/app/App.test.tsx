@@ -18,7 +18,6 @@ const renderWithI18n = (ui: React.ReactNode) => render(<I18nProvider>{ui}</I18nP
 describe('App', () => {
   beforeEach(() => {
     localStorage.clear();
-    localStorage.setItem('secretpad-token', 'test-token');
     localStorage.setItem('secretpad-user', JSON.stringify(mockUser));
   });
 

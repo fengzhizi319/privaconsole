@@ -22,13 +22,13 @@ beforeEach(() => {
 });
 
 describe('apiClient 集成：登录链路', () => {
-  it('成功登录时落盘 token 并返回用户上下文', async () => {
+  it('成功登录返回用户上下文，但绝不把 token 写入 localStorage', async () => {
     const user = await apiClient.login('admin', 'correct-hash');
 
     expect(user.name).toBe('admin');
-    expect(user.token).toBe('msw-token-123');
-    // 验证 token 真正写入了 localStorage（真实副作用）。
-    expect(localStorage.getItem('secretpad-token')).toBe('msw-token-123');
+    // 会话凭据是 HttpOnly Cookie，body 中即使带 token 也不落盘。
+    expect(user.token).toBe('');
+    expect(localStorage.getItem('secretpad-token')).toBeNull();
   });
 
   it('凭证错误时抛出后端返回的业务错误信息', async () => {
@@ -56,12 +56,14 @@ describe('apiClient 集成：节点列表归一化', () => {
 });
 
 describe('apiClient 集成：登出清理', () => {
-  it('登出后清除本地 token', async () => {
+  it('登出后清除本地会话标记与遗留 token', async () => {
     localStorage.setItem('secretpad-token', 'to-be-cleared');
+    localStorage.setItem('secretpad-user', '{}');
 
     await apiClient.logout();
 
     expect(localStorage.getItem('secretpad-token')).toBeNull();
+    expect(localStorage.getItem('secretpad-user')).toBeNull();
   });
 });
 

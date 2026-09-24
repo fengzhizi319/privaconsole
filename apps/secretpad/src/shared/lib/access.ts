@@ -94,6 +94,8 @@ const ROUTE_RULES: [prefix: string, rule: Rule][] = [
   ['/feature-datasource', everyone],
   ['/cloud-logs', everyone],
   ['/component-versions', everyone],
+  // Audit log: ADMIN / AUDITOR role, enforced by the backend (the page shows a notice otherwise).
+  ['/audit', everyone],
 ];
 
 function matchesPrefix(pathname: string, prefix: string): boolean {
@@ -138,6 +140,7 @@ export function getMenu(ctx: PlatformContext): MenuItem[] {
       { section: 'sidebar.governance' },
       { path: '/p2p/my-node', labelKey: 'sidebar.p2pMyNode', icon: '🖥️' },
       { path: '/messages', labelKey: 'sidebar.messages', icon: '🔔' },
+      { path: '/audit', labelKey: 'sidebar.audit', icon: '🧾' },
       { path: '/account', labelKey: 'sidebar.account', icon: '👤' },
     ];
   }
@@ -165,6 +168,7 @@ export function getMenu(ctx: PlatformContext): MenuItem[] {
       { path: '/messages', labelKey: 'sidebar.messages', icon: '🔔' },
       { path: '/cloud-logs', labelKey: 'sidebar.cloudLogs', icon: '☁️' },
       { path: '/privacy-scenes', labelKey: 'sidebar.privacyScenes', icon: '🛡️' },
+      { path: '/audit', labelKey: 'sidebar.audit', icon: '🧾' },
       { path: '/account', labelKey: 'sidebar.account', icon: '👤' },
     ];
   }
@@ -210,7 +214,9 @@ export function getMenu(ctx: PlatformContext): MenuItem[] {
     { path: '/cloud-logs', labelKey: 'sidebar.cloudLogs', icon: '☁️' },
     { path: '/component-versions', labelKey: 'sidebar.componentVersions', icon: '🏷️' },
     { path: '/privacy-scenes', labelKey: 'sidebar.privacyScenes', icon: '🛡️' },
-    { path: '/account', labelKey: 'sidebar.account', icon: '👤' },
   );
+  // Audit log (ADMIN / AUDITOR): shown to CENTER accounts, not to EDGE accounts on CENTER.
+  if (admin) items.push({ path: '/audit', labelKey: 'sidebar.audit', icon: '🧾' });
+  items.push({ path: '/account', labelKey: 'sidebar.account', icon: '👤' });
   return items;
 }

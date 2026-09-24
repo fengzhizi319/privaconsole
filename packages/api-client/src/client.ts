@@ -1,4 +1,5 @@
 import { api } from './api';
+import { clearStoredSession, sessionFetch } from './session';
 import type { components } from './generated/secretpad';
 import { z } from 'zod';
 import type {
@@ -132,17 +133,10 @@ function unwrapValidated<S extends z.ZodTypeAny>(schema: S, res: unknown, contex
   return validated(schema, unwrap(res as SecretPadResponse<unknown>), context);
 }
 
-/** Read the stored auth token (shared with raw `fetch` for multipart uploads). */
-function getStoredToken(): string | null {
-  return typeof localStorage !== 'undefined' ? localStorage.getItem('secretpad-token') : null;
-}
-
 /** POST a multipart/form-data body via raw fetch (openapi-fetch is JSON-only). */
 async function postMultipart<T>(url: string, formData: FormData, schema: z.ZodType<T>, context?: string): Promise<T> {
   const headers: Record<string, string> = { 'Trace-Id': `${Date.now().toString(36)}-up` };
-  const token = getStoredToken();
-  if (token) headers['User-Token'] = token;
-  const response = await fetch(url, { method: 'POST', headers, body: formData });
+  const response = await sessionFetch(url, { method: 'POST', headers, body: formData });
   if (!response.ok) throw new Error(`Upload failed with HTTP ${response.status}`);
   const json = (await response.json()) as SecretPadResponse<unknown>;
   return unwrapValidated(schema, json, context);
@@ -227,12 +221,14 @@ export function mapUserContext(raw: RawJson, fallbackName = '', token = ''): Use
     ownerId: raw?.ownerId || raw?.user?.owner_id || raw?.platformNodeId || '',
     name: raw?.name || raw?.user?.name || fallbackName,
     role: 'ADMIN',
-    token: token || raw?.token || '',
+    // Never carry a session token in the (localStorage-persisted) user object.
+    token: token || '',
     platformType: raw?.platformType || 'CENTER',
     platformNodeId: raw?.platformNodeId || undefined,
     ownerType: raw?.ownerType || raw?.user?.owner_type || 'CENTER',
     deployMode: PAD_MODES.includes(deployMode) ? deployMode : 'ALL-IN-ONE',
     apiResources: Array.isArray(raw?.apiResources) ? raw.apiResources : undefined,
+    ...(raw?.mustChangePassword === true ? { mustChangePassword: true } : {}),
   };
 }
 
@@ -256,19 +252,16 @@ export const apiClient = {
       );
     }
     const rawData = unwrap(data as unknown as SecretPadResponse<RawJson>);
-    const token = rawData.token || rawData.access_token || '';
-    if (token) {
-      localStorage.setItem('secretpad-token', token);
-    }
-    return mapUserContext(rawData, name, token);
+    // The session lives in HttpOnly cookies set by the backend; a token in the
+    // body (non-cookie backends) is deliberately NOT persisted anywhere.
+    return mapUserContext(rawData, name, '');
   },
 
   async logout(): Promise<void> {
     await api.POST('/api/v1alpha1/user/logout' as RawJson, { body: {} as never }).catch(() =>
       api.POST('/api/logout').catch(() => undefined)
     );
-    localStorage.removeItem('secretpad-token');
-    localStorage.removeItem('secretpad-user');
+    clearStoredSession();
   },
 
   async getNodes(): Promise<Node[]> {
@@ -335,7 +328,7 @@ export const apiClient = {
 
   async refreshNode(nodeId: string): Promise<Node> {
     const { data, error } = await api.POST('/api/v1alpha1/node/refresh', {
-      body: { nodeId, node_id: nodeId } as never,
+      body: { nodeId } as never,
     });
     if (error) throw new Error(apiError(error));
     const node = unwrap(data as unknown as SecretPadResponse<RawJson>);
@@ -426,7 +419,7 @@ export const apiClient = {
 
   async getDataSources(ownerId?: string): Promise<DataSource[]> {
     const { data, error } = await api.POST('/api/v1alpha1/datasource/list', {
-      body: { ownerId, owner_id: ownerId, page: 1, size: 1000 } as never,
+      body: { ownerId, page: 1, size: 1000 } as never,
     });
     if (error) throw new Error(apiError(error));
     const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
@@ -478,7 +471,7 @@ export const apiClient = {
 
   async getDataTables(ownerId?: string): Promise<DataTable[]> {
     const { data, error } = await api.POST('/api/v1alpha1/datatable/list', {
-      body: { pageSize: 1000, pageNumber: 1, ownerId, node_id: ownerId, nodeId: ownerId } as never,
+      body: { pageSize: 1000, pageNumber: 1, ownerId, nodeId: ownerId } as never,
     });
     if (error) throw new Error(apiError(error));
     const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
@@ -1119,9 +1112,7 @@ export const apiClient = {
 
   async downloadData(input: { nodeId: string; domainDataId: string }): Promise<Blob> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const token = getStoredToken();
-    if (token) headers['User-Token'] = token;
-    const response = await fetch('/api/v1alpha1/data/download', {
+    const response = await sessionFetch('/api/v1alpha1/data/download', {
       method: 'POST',
       headers,
       body: JSON.stringify(input),
@@ -1162,7 +1153,7 @@ export const apiClient = {
 
   async getNode(nodeId: string): Promise<Node> {
     const { data, error } = await api.POST('/api/v1alpha1/node/get', {
-      body: { nodeId, node_id: nodeId } as never,
+      body: { nodeId } as never,
     });
     if (error) throw new Error(apiError(error));
     const node = unwrap(data as unknown as SecretPadResponse<RawJson>);
@@ -1263,7 +1254,7 @@ export const apiClient = {
 
   async getNodeRoute(routerId: string): Promise<NodeRouterVO> {
     const { data, error } = await api.POST('/api/v1alpha1/nodeRoute/get', {
-      body: { routerId, router_id: routerId } as never,
+      body: { routerId } as never,
     });
     if (error) throw new Error(apiError(error));
     const r = unwrap(data as unknown as SecretPadResponse<RawJson>);
@@ -1298,7 +1289,7 @@ export const apiClient = {
 
   async refreshNodeRoute(routerId: string): Promise<NodeRouterVO> {
     const { data, error } = await api.POST('/api/v1alpha1/nodeRoute/refresh', {
-      body: { routerId, router_id: routerId } as never,
+      body: { routerId } as never,
     });
     if (error) throw new Error(apiError(error));
     const r = unwrap(data as unknown as SecretPadResponse<RawJson>);
@@ -1319,7 +1310,7 @@ export const apiClient = {
 
   async getInst(instId: string): Promise<InstVO> {
     const { data, error } = await api.POST('/api/v1alpha1/inst/get', {
-      body: { instId, inst_id: instId, ownerId: instId } as never,
+      body: { instId, ownerId: instId } as never,
     });
     if (error) throw new Error(apiError(error));
     const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
@@ -1385,9 +1376,7 @@ export const apiClient = {
     if (files.keyFile) formData.append('keyFile', files.keyFile);
     if (files.token) formData.append('token', files.token);
     const headers: Record<string, string> = {};
-    const token = getStoredToken();
-    if (token) headers['User-Token'] = token;
-    const response = await fetch('/api/v1alpha1/inst/node/register', {
+    const response = await sessionFetch('/api/v1alpha1/inst/node/register', {
       method: 'POST',
       headers,
       body: formData,

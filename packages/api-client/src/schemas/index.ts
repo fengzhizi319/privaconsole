@@ -11,6 +11,8 @@ export const UserSchema = z.object({
   ownerType: z.string().optional(),
   deployMode: z.string().optional(),
   apiResources: z.array(z.string()).optional(),
+  /** Session restricted to the password change (initial / admin-reset password). */
+  mustChangePassword: z.boolean().optional(),
 });
 export type User = z.infer<typeof UserSchema>;
 

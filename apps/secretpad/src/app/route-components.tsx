@@ -4,6 +4,7 @@ import { Outlet, useNavigate } from '@tanstack/react-router';
 import { ToastContainer, Button } from '@secretpad/design-system';
 import { LoginPage } from '../pages/login';
 import { landingAfterLogin } from './landing';
+import { clearStoredSession } from '@secretpad/api-client';
 
 export const PageFallback: React.FC = () => (
   <div className="min-h-[60vh] flex items-center justify-center">
@@ -44,10 +45,7 @@ export const RouteErrorComponent: React.FC<{ error: Error; reset: () => void }> 
   if (isAuthError(error)) {
     // Clear stale credentials and redirect to login. Use replace to avoid
     // leaving the broken route in the history stack.
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('secretpad-token');
-      localStorage.removeItem('secretpad-user');
-    }
+    clearStoredSession();
     if (typeof window !== 'undefined') {
       window.location.replace('/login');
     }
@@ -84,6 +82,10 @@ export const LoginRouteComponent: React.FC = () => {
   return (
     <LoginPage
       onLoginSuccess={(user) => {
+        if (user?.mustChangePassword) {
+          navigate({ to: '/change-password' } as Parameters<typeof navigate>[0]);
+          return;
+        }
         const target = landingAfterLogin(user);
         navigate({ to: target.to, params: target.params, search: target.search } as Parameters<typeof navigate>[0]);
       }}

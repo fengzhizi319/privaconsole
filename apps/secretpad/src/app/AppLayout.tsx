@@ -82,6 +82,8 @@ export const AppLayout: React.FC = () => {
         return t('sidebar.featureDatasource');
       case '/component-versions':
         return t('sidebar.componentVersions');
+      case '/audit':
+        return t('sidebar.audit');
       default:
         return t('app.title');
     }

@@ -63,11 +63,14 @@ export const handlers = [
     return fail(202011601, 'invalid username or password');
   }),
 
+  // 登录：浏览器以 X-Privahub-Session: cookie 请求时，后端只下发 HttpOnly Cookie，
+  // body 中不含 token（与 Go 后端一致）。
   http.post(`${BASE}/api/login`, async ({ request }) => {
     const body = (await request.json()) as { name?: string; passwordHash?: string };
+    const cookieMode = request.headers.get('X-Privahub-Session') === 'cookie';
     if (body.name === 'admin' && body.passwordHash === 'correct-hash') {
       return ok({
-        token: 'msw-token-123',
+        token: cookieMode ? '' : 'msw-token-123',
         name: 'admin',
         ownerId: 'kuscia-system',
         platformType: 'CENTER',
@@ -217,8 +220,12 @@ export const handlers = [
     })
   ),
 
-  // 登出：仅返回成功，验证本地 token 清理。
+  // 登出：仅返回成功，验证本地会话标记清理。
   http.post(`${BASE}/api/logout`, () => ok(null)),
+  http.post(`${BASE}/api/v1alpha1/user/logout`, () => ok('admin')),
+
+  // 刷新：用 HttpOnly refresh Cookie 轮换会话（cookie 模式下 body 不含 token）。
+  http.post(`${BASE}/api/user/refresh`, () => ok({ token_type: 'Cookie' })),
 
   // P2P 项目列表：返回合法 ProjectVO，验证 Zod 校验通过路径。
   http.post(`${BASE}/api/v1alpha1/p2p/project/list`, () =>

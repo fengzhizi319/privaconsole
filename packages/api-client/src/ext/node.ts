@@ -3,6 +3,7 @@
  * account password. Field names follow the legacy Java SecretPad contract
  * (typings.d.ts `NodeVO`, `NodeRouterVO`, `InstTokenVO`, ...).
  */
+import { sessionFetch } from '../session';
 import { javaPost, toPage, type JavaPage } from './core';
 
 /** `NodeInstanceDTO`. */
@@ -212,9 +213,7 @@ export async function registerInstNodeJava(
   form.append('keyFile', files.keyFile || new Blob([]), files.keyFile?.name || 'client.pem');
   form.append('token', files.token || new Blob([]), files.token?.name || 'token');
   const headers: Record<string, string> = {};
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('secretpad-token') : null;
-  if (token) headers['User-Token'] = token;
-  const response = await fetch('/api/v1alpha1/inst/node/register', { method: 'POST', headers, body: form });
+  const response = await sessionFetch('/api/v1alpha1/inst/node/register', { method: 'POST', headers, body: form });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const json = (await response.json()) as { status?: { code: number; msg?: string } };
   if (json.status && json.status.code !== 0) throw new Error(json.status.msg || `API error ${json.status.code}`);

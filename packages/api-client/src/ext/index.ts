@@ -13,3 +13,4 @@ export * from './node';
 export * from './model';
 export * from './result';
 export * from './graph';
+export * from './audit';

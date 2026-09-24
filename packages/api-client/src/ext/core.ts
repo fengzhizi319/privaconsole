@@ -6,6 +6,7 @@
  * backend is being aligned to exactly this contract, so ext methods pass
  * bodies through verbatim and only do light, tolerant normalisation.
  */
+import { sessionFetch } from '../session';
 import { api } from '../api';
 
 export type JavaResponse<T> = { status?: { code: number; msg?: string }; data?: T };
@@ -55,9 +56,7 @@ export function toPage<T>(payload: unknown, listKeys: string[] = []): JavaPage<T
 export async function javaPostMultipart<T = unknown>(path: string, form: FormData): Promise<T> {
   const url = path.startsWith('/api') ? path : `/api/v1alpha1/${path.replace(/^\//, '')}`;
   const headers: Record<string, string> = {};
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('secretpad-token') : null;
-  if (token) headers['User-Token'] = token;
-  const response = await fetch(url, { method: 'POST', headers, body: form });
+  const response = await sessionFetch(url, { method: 'POST', headers, body: form });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const json = (await response.json()) as JavaResponse<T>;
   if (json.status && json.status.code !== 0) throw new Error(json.status.msg || `API error ${json.status.code}`);
