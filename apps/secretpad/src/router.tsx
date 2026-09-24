@@ -1,16 +1,11 @@
-import React, { Suspense } from 'react';
-import {
-  createRootRoute,
-  createRoute,
-  createRouter,
-  Outlet,
-  redirect,
-  useNavigate,
-} from '@tanstack/react-router';
-import { ToastContainer, Button } from '@secretpad/design-system';
+import React from 'react';
+import { createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router';
 
 import { AppLayout } from './app/AppLayout';
-import { LoginPage } from './pages/login';
+import { LoginRouteComponent, RootComponent, RouteErrorComponent } from './app/route-components';
+import { getStoredUser } from './features/auth/model/auth-store';
+import { resolveMyNodeId, toPlatformContext } from './shared/lib/platform';
+import { canAccessPath, resolveHomePath, type HomeTarget } from './shared/lib/access';
 
 // Route-level code splitting: each authenticated page is loaded on demand.
 // React.lazy requires a default export, so named page components are adapted.
@@ -43,6 +38,11 @@ const WorkbenchPage = lazyPage(() => import('./pages/workbench'), 'WorkbenchPage
 const CloudLogsPage = lazyPage(() => import('./pages/cloud-logs'), 'CloudLogsPage');
 const FeatureDatasourcePage = lazyPage(() => import('./pages/feature-datasource'), 'FeatureDatasourcePage');
 const ComponentVersionsPage = lazyPage(() => import('./pages/component-versions'), 'ComponentVersionsPage');
+const NodeLayoutPage = lazyPage(() => import('./pages/node'), 'NodeLayoutPage');
+const AllDataSourcesPage = lazyPage(() => import('./pages/all-data'), 'AllDataSourcesPage');
+const AllDataTablesPage = lazyPage(() => import('./pages/all-data'), 'AllDataTablesPage');
+const InstRegisterPage = lazyPage(() => import('./pages/institutions/register'), 'InstRegisterPage');
+const PeriodicTaskDetailPage = lazyPage(() => import('./pages/periodic-tasks/detail'), 'PeriodicTaskDetailPage');
 
 /**
  * Read the auth token directly from localStorage (not the Zustand store).
@@ -53,96 +53,42 @@ const ComponentVersionsPage = lazyPage(() => import('./pages/component-versions'
  */
 const getAuthToken = () => localStorage.getItem('secretpad-token');
 
-const PageFallback: React.FC = () => (
-  <div className="min-h-[60vh] flex items-center justify-center">
-    <span className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" aria-label="loading" />
-  </div>
-);
+/** Platform context of the persisted user (sync; refreshed by AppLayout via user/get). */
+const storedContext = () => toPlatformContext(getStoredUser());
 
-const RootComponent: React.FC = () => (
-  <>
-    <ToastContainer />
-    <Suspense fallback={<PageFallback />}>
-      <Outlet />
-    </Suspense>
-  </>
-);
-
-/**
- * Route-level error fallback. TanStack Router renders this when a route's
- * loader or component throws, so a single bad page degrades locally instead
- * of blanking the whole app.
- *
- * Authentication errors are handled centrally: when the backend returns 401
- * ("login is required"), we clear the stale token and send the user back to
- * the login page. This avoids showing the raw error screen on the initial
- * visit when an expired token is still in localStorage.
- */
-const isAuthError = (error: Error): boolean => {
-  const message = error.message || '';
-  return (
-    message.includes('login is required') ||
-    message.includes('用户认证失败') ||
-    message.includes('Authentication failed') ||
-    message.includes('Unauthorized')
-  );
-};
-
-const RouteErrorComponent: React.FC<{ error: Error; reset: () => void }> = ({ error, reset }) => {
-  if (isAuthError(error)) {
-    // Clear stale credentials and redirect to login. Use replace to avoid
-    // leaving the broken route in the history stack.
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('secretpad-token');
-      localStorage.removeItem('secretpad-user');
-    }
-    if (typeof window !== 'undefined') {
-      window.location.replace('/login');
-    }
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center p-6">
-        <div className="text-xs text-gray-400">{error.message}</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-[60vh] flex items-center justify-center p-6">
-      <div className="max-w-md w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-lg p-8 text-center">
-        <div className="text-4xl mb-4" aria-hidden>
-          ⚠️
-        </div>
-        <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">Page failed to load</h1>
-        <p className="text-xs text-gray-400 dark:text-gray-500 font-mono break-all mb-6">{error.message}</p>
-        <div className="flex justify-center gap-3">
-          <Button variant="outline" onClick={reset}>
-            Try again
-          </Button>
-          <Button variant="primary" onClick={() => (window.location.href = '/dashboard')}>
-            Back to dashboard
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-};
+/** Build a TanStack `redirect` to a HomeTarget. */
+const redirectTo = (target: HomeTarget) =>
+  redirect({ to: target.to, params: target.params, search: target.search } as Parameters<typeof redirect>[0]);
 
 export const rootRoute = createRootRoute({
   component: RootComponent,
   errorComponent: RouteErrorComponent,
 });
 
-const LoginRouteComponent: React.FC = () => {
-  const navigate = useNavigate();
-  return <LoginPage onLoginSuccess={() => navigate({ to: '/dashboard' })} />;
-};
+const optStr = (v: unknown): string | undefined =>
+  v === undefined || v === null || v === '' ? undefined : String(v);
+
+/** /dag search: project/graph to open; P2P entry also passes compute mode/type. */
+export interface DagSearch {
+  projectId?: string;
+  graphId?: string;
+  dagId?: string;
+  mode?: string;
+  type?: string;
+}
+
+/** /results search: legacy deep link `?ownerId=&resultName=`. */
+export interface ResultsSearch {
+  ownerId?: string;
+  resultName?: string;
+}
 
 export const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/login',
   beforeLoad: () => {
     if (getAuthToken()) {
-      throw redirect({ to: '/dashboard' });
+      throw redirectTo(resolveHomePath(storedContext()));
     }
   },
   component: LoginRouteComponent,
@@ -151,9 +97,14 @@ export const loginRoute = createRoute({
 export const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: 'app',
-  beforeLoad: () => {
+  beforeLoad: ({ location }) => {
     if (!getAuthToken()) {
       throw redirect({ to: '/login' });
+    }
+    // Route-level guard per platformType / ownerType (legacy *-auth wrappers).
+    const ctx = storedContext();
+    if (location.pathname !== '/' && !canAccessPath(location.pathname, ctx)) {
+      throw redirectTo(resolveHomePath(ctx));
     }
   },
   component: AppLayout,
@@ -163,7 +114,7 @@ export const indexRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/',
   beforeLoad: () => {
-    throw redirect({ to: '/dashboard' });
+    throw redirectTo(resolveHomePath(storedContext()));
   },
 });
 
@@ -211,6 +162,13 @@ export const dataSourceDetailRoute = createRoute({
 export const dagRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/dag',
+  validateSearch: (search: Record<string, unknown>): DagSearch => ({
+    projectId: optStr(search.projectId),
+    graphId: optStr(search.graphId),
+    dagId: optStr(search.dagId),
+    mode: optStr(search.mode),
+    type: optStr(search.type),
+  }),
   component: DAGPage,
 });
 
@@ -229,6 +187,10 @@ export const modelsRoute = createRoute({
 export const resultsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/results',
+  validateSearch: (search: Record<string, unknown>): ResultsSearch => ({
+    ownerId: optStr(search.ownerId),
+    resultName: optStr(search.resultName),
+  }),
   component: ResultsPage,
 });
 
@@ -241,6 +203,9 @@ export const jobRecordsRoute = createRoute({
 export const periodicTasksRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/periodic-tasks',
+  validateSearch: (search: Record<string, unknown>): { projectId?: string } => ({
+    projectId: optStr(search.projectId),
+  }),
   component: PeriodicTasksPage,
 });
 
@@ -277,6 +242,11 @@ export const p2pProjectsRoute = createRoute({
 export const p2pMyNodeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/p2p/my-node',
+  validateSearch: (search: Record<string, unknown>): { ownerId?: string } => ({ ownerId: optStr(search.ownerId) }),
+  beforeLoad: ({ search }) => {
+    // CENTER admins own no node: only built-in nodes via ?ownerId= (legacy edge-auth).
+    if (resolveMyNodeId(storedContext(), search.ownerId) === null) throw redirect({ to: '/nodes' });
+  },
   component: P2pMyNodePage,
 });
 
@@ -316,6 +286,82 @@ export const componentVersionsRoute = createRoute({
   component: ComponentVersionsPage,
 });
 
+export const periodicTaskDetailRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/periodic-tasks/detail',
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { scheduleId: string; projectId: string; graphId?: string; scheduleTaskId?: string } => ({
+    scheduleId: String(search.scheduleId ?? ''),
+    projectId: String(search.projectId ?? ''),
+    graphId: optStr(search.graphId),
+    // Present → a single run (scheduled/task/info + its jobs); absent → whole schedule.
+    scheduleTaskId: optStr(search.scheduleTaskId),
+  }),
+  component: PeriodicTaskDetailPage,
+});
+
+export const allDataSourcesRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/all-data-sources',
+  component: AllDataSourcesPage,
+});
+
+export const allDataTablesRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/all-data-tables',
+  component: AllDataTablesPage,
+});
+
+export const instRegisterRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/inst-register',
+  component: InstRegisterPage,
+});
+
+/** Node-context view (legacy `/node?ownerId=`): tabs scoped to one node. */
+export const nodeLayoutRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/node/$nodeId',
+  component: NodeLayoutPage,
+});
+
+export const nodeIndexRoute = createRoute({
+  getParentRoute: () => nodeLayoutRoute,
+  path: '/',
+  beforeLoad: ({ params }) => {
+    // TEE nodes have no datasource tab.
+    throw redirect({
+      to: params.nodeId === 'tee' ? '/node/$nodeId/data-tables' : '/node/$nodeId/data-sources',
+      params: { nodeId: params.nodeId },
+    });
+  },
+});
+
+export const nodeDataSourcesRoute = createRoute({
+  getParentRoute: () => nodeLayoutRoute,
+  path: '/data-sources',
+  component: DataSourcesPage,
+});
+
+export const nodeDataTablesRoute = createRoute({
+  getParentRoute: () => nodeLayoutRoute,
+  path: '/data-tables',
+  component: DataTablesPage,
+});
+
+export const nodeCooperativeNodesRoute = createRoute({
+  getParentRoute: () => nodeLayoutRoute,
+  path: '/cooperative-nodes',
+  component: NodeRoutesPage,
+});
+
+export const nodeResultsRoute = createRoute({
+  getParentRoute: () => nodeLayoutRoute,
+  path: '/results',
+  component: ResultsPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   appRoute.addChildren([
@@ -344,6 +390,17 @@ const routeTree = rootRoute.addChildren([
     cloudLogsRoute,
     featureDatasourceRoute,
     componentVersionsRoute,
+    periodicTaskDetailRoute,
+    allDataSourcesRoute,
+    allDataTablesRoute,
+    instRegisterRoute,
+    nodeLayoutRoute.addChildren([
+      nodeIndexRoute,
+      nodeDataSourcesRoute,
+      nodeDataTablesRoute,
+      nodeCooperativeNodesRoute,
+      nodeResultsRoute,
+    ]),
   ]),
 ]);
 

@@ -1,3 +1,6 @@
+import { mergeDictionaries } from './ext/merge';
+import { extZh, extEn } from './ext';
+
 export type Locale = 'zh-CN' | 'en-US';
 
 /**
@@ -277,6 +280,7 @@ const zh: Dictionary = {
   },
   common: {
     error: '出错了：{{message}}',
+    fullscreen: '全屏',
     loading: '加载中...',
     empty: '暂无数据',
     save: '保存',
@@ -372,6 +376,9 @@ const zh: Dictionary = {
     servingMock: '模拟服务',
     servingFeatureMappings: '特征映射',
     servingNoDetail: '该模型尚未发布服务',
+    modelGraph: '模型链路',
+    modelPath: '{{name}} 模型路径',
+    modelGraphEmpty: '暂无训练流快照',
     servingId: '服务 ID',
   },
   cloudLogs: {
@@ -391,6 +398,8 @@ const zh: Dictionary = {
     noParties: '暂无参与方信息',
     emptyHint: '选择项目并点击“拉取日志”开始检索',
     logCount: '共 {{count}} 行日志',
+    notConfigured: '未配置云日志：暂未连接 SLS 工具，请登录容器查看日志。',
+    helpDoc: '如何集成 SLS？查看帮助文档',
   },
   featureDs: {
     tabFeature: '特征数据源',
@@ -1163,6 +1172,7 @@ const en: Dictionary = {
   },
   common: {
     error: 'Error: {{message}}',
+    fullscreen: 'Fullscreen',
     loading: 'Loading...',
     empty: 'No data',
     save: 'Save',
@@ -1256,6 +1266,9 @@ const en: Dictionary = {
     servingMock: 'Mock Serving',
     servingFeatureMappings: 'Feature Mappings',
     servingNoDetail: 'This model has not been served yet',
+    modelGraph: 'Model pipeline',
+    modelPath: '{{name}} model path',
+    modelGraphEmpty: 'No pipeline snapshot',
     servingId: 'Serving ID',
   },
   cloudLogs: {
@@ -1275,6 +1288,8 @@ const en: Dictionary = {
     noParties: 'No party information',
     emptyHint: 'Select a project and click "Fetch Logs" to start',
     logCount: '{{count}} log lines',
+    notConfigured: 'Cloud logging is not configured: SLS is not connected, please check the logs inside the container.',
+    helpDoc: 'How to integrate SLS? See the docs',
   },
   featureDs: {
     tabFeature: 'Feature Datasource',
@@ -1740,6 +1755,6 @@ const en: Dictionary = {
 };
 
 export const dictionaries: Record<Locale, Dictionary> = {
-  'zh-CN': zh,
-  'en-US': en,
+  'zh-CN': mergeDictionaries(zh, ...extZh),
+  'en-US': mergeDictionaries(en, ...extEn),
 };

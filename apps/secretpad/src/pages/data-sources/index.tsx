@@ -1,223 +1,271 @@
+/**
+ * 数据源管理页（旧前端 `data-source-list` 的迁移版）。
+ *
+ * - 列表：`datasource/list`（Java `DatasourceListRequest{page,size,ownerId,name,status,types}`），服务端分页；
+ * - 名称搜索（300ms 防抖）、类型筛选、状态筛选（AUTONOMY 下隐藏）；
+ * - 注册：结构化表单（OSS / ODPS / MYSQL / HTTP / LOCAL），AUTONOMY 支持多节点（最多 5 个）；
+ * - 删除：已绑定数据表（relatedDatas）时禁止并列出绑定的数据表，HTTP 数据源不可删除；
+ * - 节点视图（/node/$nodeId）下作用于该节点并隐藏节点选择；TEE 节点无数据源功能。
+ */
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, Button, Badge, Modal, ConfirmDialog, toast } from '@secretpad/design-system';
-import type { DataSource, CreateDataSourceInput } from '@secretpad/api-client';
-import { apiClient } from '@secretpad/api-client';
-import { useTranslation } from '../../shared/lib/i18n';
-import { AccessGuard } from '../../features/auth/ui/access-guard';
-import { Platform } from '../../shared/lib/platform';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Badge, Button, Card, ConfirmDialog, Empty, Input, Pagination, RadioGroup, Select, toast } from '@secretpad/design-system';
+import { REMOTE_DATASOURCE_TYPES, apiClient, deleteDatasourceJava, listDatasourcesJava } from '@secretpad/api-client';
+import type { DatasourceListInfoJava } from '@secretpad/api-client';
+import { useTranslation } from '@/shared/lib/i18n';
+import { useNodeScope } from '@/features/data-scope';
+import { DatasourceFormDrawer, datasourceDeleteBlock } from '@/features/datasource-form';
 
-const DEFAULT_TYPES = ['local', 'odps', 'mysql', 'postgres'];
+const PAGE_SIZE = 10;
 
 export const DataSourcesPage: React.FC = () => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const scope = useNodeScope();
+  const { ownerId, platform } = scope;
+  const isAutonomy = platform.isAutonomy;
 
-  const [selectedNodeId, setSelectedNodeId] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<DataSource | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DatasourceListInfoJava | null>(null);
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [dsName, setDsName] = useState('');
-  const [dsType, setDsType] = useState('local');
-  const [dsInfo, setDsInfo] = useState('{}');
-
-  const nodesQuery = useQuery({
-    queryKey: ['nodes'],
-    queryFn: () => apiClient.getNodes(),
-  });
-  const nodes = nodesQuery.data ?? [];
-
-  // Default the selected node to the first one once nodes load.
   useEffect(() => {
-    if (!selectedNodeId && nodes.length > 0) {
-      setSelectedNodeId(nodes[0].nodeId);
-    }
-  }, [nodes, selectedNodeId]);
+    const id = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [searchInput]);
 
-  const sourcesQuery = useQuery({
-    queryKey: ['datasources', selectedNodeId],
-    queryFn: () => apiClient.getDataSources(selectedNodeId),
-    enabled: !!selectedNodeId,
+  const listKey = ['datasources-java', ownerId, page, search, status, typeFilter];
+  const listQuery = useQuery({
+    queryKey: listKey,
+    queryFn: () =>
+      listDatasourcesJava({
+        ownerId,
+        page,
+        size: PAGE_SIZE,
+        name: search,
+        status,
+        types: typeFilter ? [typeFilter] : REMOTE_DATASOURCE_TYPES,
+      }),
+    enabled: !!ownerId && !scope.isTeeNode,
   });
-  const sources = sourcesQuery.data ?? [];
+  const infos = listQuery.data?.infos ?? [];
+  const total = listQuery.data?.total ?? 0;
 
-  const invalidateSources = () =>
-    queryClient.invalidateQueries({ queryKey: ['datasources', selectedNodeId] });
-
-  const createMutation = useMutation({
-    mutationFn: () => {
-      let info: Record<string, any>;
-      try {
-        info = JSON.parse(dsInfo);
-      } catch {
-        return Promise.reject(new Error(t('dataSources.infoInvalid')));
-      }
-      const input: CreateDataSourceInput = {
-        ownerId: selectedNodeId,
-        nodeIds: [selectedNodeId],
-        type: dsType,
-        name: dsName,
-        info,
-      };
-      return apiClient.createDataSource(input);
-    },
-    onSuccess: () => {
-      setIsModalOpen(false);
-      resetForm();
-      invalidateSources();
-    },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  // AUTONOMY: nodes of the institution that are Ready (legacy `inst/node/list`).
+  const instNodesQuery = useQuery({
+    queryKey: ['inst-nodes'],
+    queryFn: () => apiClient.listInstNodes(),
+    enabled: isAutonomy && createOpen,
   });
+  const formNodeOptions = isAutonomy
+    ? (instNodesQuery.data ?? [])
+        .filter((n) => (n.nodeStatus || n.status || '').toLowerCase() === 'ready')
+        .map((n) => ({ value: n.nodeId, label: n.nodeName || n.nodeId }))
+    : scope.nodeOptions.filter((o) => o.value === ownerId);
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['datasources-java', ownerId] });
 
   const deleteMutation = useMutation({
-    mutationFn: (ds: DataSource) => apiClient.deleteDataSource(selectedNodeId, ds.datasourceId, ds.type),
+    mutationFn: (ds: DatasourceListInfoJava) =>
+      deleteDatasourceJava({ ownerId, datasourceId: ds.datasourceId, type: ds.type }),
     onSuccess: () => {
-      setDeleteTarget(null);
-      invalidateSources();
       toast.success(t('dataSources.deleteSuccess'));
+      setDeleteTarget(null);
+      invalidate();
     },
     onError: (e) => {
       setDeleteTarget(null);
-      setError(e instanceof Error ? e.message : String(e));
+      toast.error(e instanceof Error ? e.message : String(e));
     },
   });
 
-  const resetForm = () => {
-    setDsName('');
-    setDsType('local');
-    setDsInfo('{}');
-  };
+  const openDetail = (ds: DatasourceListInfoJava) =>
+    navigate({ to: '/data-sources/detail', search: { ownerId: ownerId || '', datasourceId: ds.datasourceId || '', type: ds.type || '' } });
 
-  const handleCreate = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    createMutation.mutate();
-  };
+  if (scope.isTeeNode) {
+    return <Empty className="py-16">{t('dataSources.teeNoDatasource')}</Empty>;
+  }
 
-  const handleDelete = (ds: DataSource) => {
-    setDeleteTarget(ds);
-  };
-
-  const handleDetail = (ds: DataSource) => {
-    navigate({
-      to: '/data-sources/detail',
-      search: { ownerId: selectedNodeId, datasourceId: ds.datasourceId, type: ds.type },
-    });
-  };
-
-  const loading = sourcesQuery.isLoading;
-  const queryError = sourcesQuery.error?.message || nodesQuery.error?.message || null;
+  const typeOptions = [{ value: '', label: t('dataCommon.allTypes') }, ...REMOTE_DATASOURCE_TYPES.map((v) => ({ value: v, label: v }))];
+  const statusOptions = [
+    { value: '', label: t('dataCommon.all') },
+    { value: 'Available', label: t('dataTables.statusAvailable') },
+    { value: 'UnAvailable', label: t('dataTables.statusUnavailable') },
+  ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
+    <div className="space-y-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
         <div>
           <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('dataSources.title')}</h2>
           <p className="text-xs text-gray-500">{t('dataSources.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <select
-            value={selectedNodeId}
-            onChange={(e) => setSelectedNodeId(e.target.value)}
-            className="px-3 py-1.5 rounded-lg text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
-          >
-            {nodes.map((n) => (
-              <option key={n.nodeId} value={n.nodeId}>{n.nodeName}</option>
-            ))}
-          </select>
-          <AccessGuard access={{ types: [Platform.CENTER] }}>
-            <Button variant="primary" icon={<span>＋</span>} onClick={() => setIsModalOpen(true)}>{t('dataSources.add')}</Button>
-          </AccessGuard>
+        <div className="flex flex-wrap items-center gap-2">
+          {scope.showPicker && (
+            <Select
+              aria-label={t('dataSources.nodeSelect')}
+              value={ownerId}
+              options={scope.nodeOptions}
+              onChange={(v) => {
+                scope.setOwnerId(v);
+                setPage(1);
+              }}
+              className="w-40"
+            />
+          )}
+          {scope.canWrite && (
+            <Button variant="primary" onClick={() => setCreateOpen(true)}>
+              ＋ {t('dataSources.register')}
+            </Button>
+          )}
         </div>
       </div>
 
-      {(error || queryError) && (
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          aria-label={t('dataSources.searchPlaceholder')}
+          placeholder={t('dataSources.searchPlaceholder')}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          className="!w-56"
+        />
+        {!isAutonomy && (
+          <RadioGroup
+            name={t('dataSources.status')}
+            options={statusOptions}
+            value={status}
+            onChange={(v) => {
+              setStatus(v);
+              setPage(1);
+            }}
+          />
+        )}
+        <Select
+          aria-label={t('dataSources.type')}
+          value={typeFilter}
+          options={typeOptions}
+          onChange={(v) => {
+            setTypeFilter(v);
+            setPage(1);
+          }}
+          className="!w-36"
+        />
+      </div>
+
+      {listQuery.error && (
         <div className="text-xs text-red-500 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg px-4 py-2">
-          {t('common.error', { message: error || queryError || '' })}
+          {t('common.error', { message: listQuery.error.message })}
         </div>
       )}
 
-      {loading && <div className="text-xs text-gray-400">{t('common.loading')}</div>}
+      <Card bodyClassName="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-gray-50 dark:bg-gray-850 text-gray-500 font-semibold border-b border-gray-200 dark:border-gray-800">
+              <tr>
+                <th className="p-3">{t('dataSources.nameLabel')}</th>
+                <th className="p-3">{t('dataSources.type')}</th>
+                <th className="p-3">{t('dataSources.status')}</th>
+                <th className="p-3">{t('common.action')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-800 text-gray-800 dark:text-gray-200">
+              {listQuery.isLoading && (
+                <tr>
+                  <td colSpan={4} className="p-4 text-center text-gray-400">
+                    {t('common.loading')}
+                  </td>
+                </tr>
+              )}
+              {!listQuery.isLoading && infos.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="p-6 text-center text-gray-400">
+                    {t('dataSources.noData')}
+                  </td>
+                </tr>
+              )}
+              {infos.map((ds) => {
+                const block = datasourceDeleteBlock(ds);
+                const blockTip =
+                  block === 'bound'
+                    ? `${t('dataSources.deleteBlockedBound')}\n${(ds.relatedDatas || []).join('\n')}`
+                    : block === 'http'
+                      ? t('dataSources.deleteBlockedHttp')
+                      : '';
+                return (
+                  <tr key={ds.datasourceId} className="hover:bg-gray-50/50 dark:hover:bg-gray-850/50">
+                    <td className="p-3">
+                      <button type="button" className="font-semibold text-blue-600 hover:underline" title={ds.name} onClick={() => openDetail(ds)}>
+                        {ds.name}
+                      </button>
+                    </td>
+                    <td className="p-3 font-mono">{ds.type}</td>
+                    <td className="p-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {(ds.nodes || []).map((n) => (
+                          <span key={n.nodeId} className="inline-flex items-center gap-1">
+                            <span className="text-gray-500">{n.nodeName || n.nodeId}</span>
+                            <Badge status={n.status === 'Available' ? 'success' : 'error'}>
+                              {n.status === 'Available' ? t('dataTables.statusAvailable') : t('dataTables.statusUnavailable')}
+                            </Badge>
+                          </span>
+                        ))}
+                        {(ds.nodes || []).length === 0 && '-'}
+                      </div>
+                    </td>
+                    <td className="p-3">
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="link" onClick={() => openDetail(ds)}>
+                          {t('dataSources.detail')}
+                        </Button>
+                        {scope.canWrite && (
+                          <span title={blockTip}>
+                            <Button size="sm" variant="link" className="!text-red-600" disabled={!!block} onClick={() => setDeleteTarget(ds)}>
+                              {t('common.delete')}
+                            </Button>
+                          </span>
+                        )}
+                        {block === 'bound' && (
+                          <span className="text-[11px] text-gray-400" title={blockTip}>
+                            {t('dataSources.boundCount', { n: (ds.relatedDatas || []).length })}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="p-3 border-t border-gray-100 dark:border-gray-800">
+          <Pagination page={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} />
+        </div>
+      </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {sources.map((ds) => (
-          <Card key={ds.datasourceId}>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="font-bold text-sm text-gray-900 dark:text-gray-100">{ds.name}</h3>
-              <div className="flex items-center gap-2">
-                <Badge status="success">{ds.status || 'Available'}</Badge>
-                <Button size="sm" variant="ghost" onClick={() => handleDetail(ds)}>{t('dataSources.detail')}</Button>
-                <AccessGuard access={{ types: [Platform.CENTER] }}>
-                  <Button size="sm" variant="danger" onClick={() => handleDelete(ds)}>{t('common.delete')}</Button>
-                </AccessGuard>
-              </div>
-            </div>
-            <div className="text-xs text-gray-500 space-y-1 font-mono">
-              <div>{t('dataSources.id')}: {ds.datasourceId}</div>
-              <div>{t('dataSources.type')}: {ds.type}</div>
-              <div>{t('dataSources.nodes')}: {(ds.nodes || []).map((n) => n.nodeName || n.nodeId).join(', ')}</div>
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {sources.length === 0 && !loading && !queryError && (
-        <div className="text-center text-xs text-gray-400 py-10">{t('dataSources.noData')}</div>
-      )}
-
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => { setIsModalOpen(false); resetForm(); }}
-        title={t('dataSources.modalAddTitle')}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => { setIsModalOpen(false); resetForm(); }}>{t('common.cancel')}</Button>
-            <Button variant="primary" onClick={handleCreate} loading={createMutation.isPending}>{t('common.confirm')}</Button>
-          </>
-        }
-      >
-        <form onSubmit={handleCreate} className="space-y-4 text-xs">
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('dataSources.nameLabel')}</label>
-            <input
-              type="text"
-              value={dsName}
-              onChange={(e) => setDsName(e.target.value)}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
-              required
-            />
-          </div>
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('dataSources.typeLabel')}</label>
-            <select
-              value={dsType}
-              onChange={(e) => setDsType(e.target.value)}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
-            >
-              {DEFAULT_TYPES.map((type) => (
-                <option key={type} value={type}>{type.toUpperCase()}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('dataSources.infoLabel')} (JSON)</label>
-            <textarea
-              value={dsInfo}
-              onChange={(e) => setDsInfo(e.target.value)}
-              rows={4}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 font-mono text-[10px] focus:outline-none focus:border-blue-500"
-            />
-          </div>
-        </form>
-      </Modal>
+      <DatasourceFormDrawer
+        isOpen={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={invalidate}
+        ownerId={ownerId}
+        nodeOptions={formNodeOptions}
+        defaultNodeId={ownerId}
+        multiNode={isAutonomy}
+      />
 
       <ConfirmDialog
         isOpen={!!deleteTarget}
         title={t('dataSources.delete')}
-        message={t('dataSources.deleteConfirm')}
+        message={t('dataSources.deleteConfirmNamed', { name: deleteTarget?.name || '' })}
         danger
         loading={deleteMutation.isPending}
         confirmText={t('common.delete')}

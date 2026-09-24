@@ -23,25 +23,37 @@ vi.mock('@tanstack/react-router', () => ({
 
 const mockApi = vi.hoisted(() => ({
   getProjects: vi.fn(),
-  getComponents: vi.fn(),
-  listComponentI18n: vi.fn(),
   getGraphs: vi.fn(),
-  getGraphDetail: vi.fn(),
   createGraph: vi.fn(),
   deleteGraph: vi.fn(),
-  stopGraph: vi.fn(),
   renameGraph: vi.fn(),
-  updateGraph: vi.fn(),
-  startGraph: vi.fn(),
-  updateGraphNode: vi.fn(),
-  getGraphNodeLogs: vi.fn(),
-  getGraphNodeOutput: vi.fn(),
-  batchGetComponent: vi.fn(),
+  getModels: vi.fn(),
+  downloadData: vi.fn(),
 }));
 
-vi.mock('@secretpad/api-client', () => ({
-  apiClient: mockApi,
+const mockJava = vi.hoisted(() => ({
+  getProjectDetailJava: vi.fn(),
+  listComponentsJava: vi.fn(),
+  getComponentI18nJava: vi.fn(),
+  getGraphDetailJava: vi.fn(),
+  batchComponentsJava: vi.fn(),
+  refreshGraphNodeMaxIndexJava: vi.fn(),
+  fullUpdateGraphJava: vi.fn(),
+  updateGraphNodeJava: vi.fn(),
+  listGraphNodeStatusJava: vi.fn(),
+  startGraphJava: vi.fn(),
+  stopGraphNodeJava: vi.fn(),
+  getGraphNodeLogsJava: vi.fn(),
+  getCloudLogsJava: vi.fn(),
+  getGraphNodeOutputJava: vi.fn(),
+  getProjectDatatableColumnsJava: vi.fn(),
+  createGraphJava: vi.fn(),
 }));
+
+vi.mock('@secretpad/api-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@secretpad/api-client')>();
+  return { ...actual, apiClient: mockApi, ...mockJava };
+});
 
 vi.mock('../../features/dag-templates', () => ({
   useTemplateWizard: () => ({ open: vi.fn() }),
@@ -62,6 +74,8 @@ import { I18nProvider } from '../../shared/lib/i18n';
 
 // ---- 测试数据 ---------------------------------------------------------------
 
+import { normalizeGraphDetail } from '@secretpad/api-client/src/ext/graph';
+
 const componentVO = {
   code_name: 'ml.train/ss_sgd_train',
   name: 'ss_sgd_train',
@@ -73,16 +87,26 @@ const componentVO = {
 let graphDetailData: { nodes: any[]; edges: any[] };
 
 function setupApiMock() {
-  mockApi.getProjects.mockResolvedValue([
-    { projectId: 'p1', projectName: 'Demo Project', nodes: [] },
-  ]);
-  mockApi.getComponents.mockResolvedValue([componentVO]);
-  mockApi.listComponentI18n.mockResolvedValue({});
+  mockApi.getProjects.mockResolvedValue([{ projectId: 'p1', projectName: 'Demo Project', nodes: [] }]);
   mockApi.getGraphs.mockResolvedValue([{ graphId: 'g1', name: 'Graph 1' }]);
-  mockApi.getGraphDetail.mockImplementation(() => Promise.resolve(graphDetailData));
-  mockApi.batchGetComponent.mockResolvedValue({});
-  mockApi.updateGraph.mockResolvedValue(undefined);
-  mockApi.updateGraphNode.mockResolvedValue(undefined);
+  mockJava.getProjectDetailJava.mockResolvedValue({ projectId: 'p1', computeMode: 'MPC', nodes: [] });
+  mockJava.listComponentsJava.mockResolvedValue([{ app: 'secretflow', ...componentVO }]);
+  mockJava.getComponentI18nJava.mockResolvedValue({});
+  mockJava.getGraphDetailJava.mockImplementation(() => Promise.resolve(normalizeGraphDetail(graphDetailData)));
+  mockJava.batchComponentsJava.mockResolvedValue({
+    'ml.train/ss_sgd_train': {
+      domain: 'ml.train',
+      name: 'ss_sgd_train',
+      version: '1.0.0',
+      inputs: [{ name: 'input_ds', types: ['sf.table.vertical'] }],
+      outputs: [{ name: 'output_model', types: ['sf.model.ss_sgd'] }, { name: 'report', types: ['sf.report'] }],
+      attrs: [],
+    },
+  });
+  mockJava.refreshGraphNodeMaxIndexJava.mockResolvedValue(32);
+  mockJava.fullUpdateGraphJava.mockResolvedValue(undefined);
+  mockJava.updateGraphNodeJava.mockResolvedValue(undefined);
+  mockJava.listGraphNodeStatusJava.mockResolvedValue({ finished: true, nodes: [] });
 }
 
 function createDataTransfer() {
@@ -147,9 +171,11 @@ describe('/dag 页面：组件拖拽构建任务', () => {
   // 因此一律以工作区顶栏的节点/边计数作为「画布已就绪」的锚点。
   const waitWorkspaceReady = async () => {
     await waitFor(() => expect(counterText('0 nodes · 0 edges')).toBeTruthy());
+    // 组件列表（component/list）异步加载，组件库条目出现后才能拖拽。
+    await waitFor(() => expect(document.querySelector('[draggable="true"]')).toBeTruthy());
     // 还必须等图详情查询真正落地：其 resolve 会触发一次 server → canvas 全量同步，
     // 若在途时拖入节点，节点会被这次同步冲掉（与生产环境同一语义：服务端为准）。
-    await waitFor(() => expect(mockApi.getGraphDetail).toHaveBeenCalled());
+    await waitFor(() => expect(mockJava.getGraphDetailJava).toHaveBeenCalled());
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
@@ -230,5 +256,61 @@ describe('/dag 页面：组件拖拽构建任务', () => {
 
     await waitFor(() => expect(counterText('1 nodes · 0 edges')).toBeTruthy());
     expect(screen.getByText('ServerNode')).toBeTruthy();
+  });
+});
+
+describe('/dag 页面：节点 ID、自动保存与合并', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    graphDetailData = { nodes: [], edges: [] };
+    setupApiMock();
+  });
+
+  it('新增节点 ID 取 graph/node/max_index（${graphId}-node-${index}），并防抖自动保存为 graph/update', async () => {
+    const { container } = renderPage();
+    await waitFor(() => expect(counterText('0 nodes · 0 edges')).toBeTruthy());
+    await waitFor(() => expect(mockJava.getGraphDetailJava).toHaveBeenCalled());
+    await waitFor(() => expect(container.querySelector('[draggable="true"]')).toBeTruthy());
+    const item = container.querySelector('[draggable="true"]') as HTMLElement;
+    fireEvent.click(within(item).getByText('ss_sgd_train'));
+    await waitFor(() => expect(counterText('1 nodes · 0 edges')).toBeTruthy());
+    expect(mockJava.refreshGraphNodeMaxIndexJava).toHaveBeenCalledWith('p1', 'g1', undefined);
+    await waitFor(() => expect(mockJava.fullUpdateGraphJava).toHaveBeenCalled(), { timeout: 3000 });
+    const body = mockJava.fullUpdateGraphJava.mock.calls.at(-1)![0];
+    expect(body.nodes[0]).toMatchObject({
+      graphNodeId: 'g1-node-33',
+      codeName: 'ml.train/ss_sgd_train',
+      outputs: ['g1-node-33-output-0', 'g1-node-33-output-1'],
+    });
+  });
+
+  it('本地有未保存改动时，服务端刷新不会冲掉本地新增节点', async () => {
+    const { container, queryClient } = renderPage();
+    await waitFor(() => expect(counterText('0 nodes · 0 edges')).toBeTruthy());
+    await waitFor(() => expect(mockJava.getGraphDetailJava).toHaveBeenCalled());
+    await waitFor(() => expect(container.querySelector('[draggable="true"]')).toBeTruthy());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    // 保存挂起：模拟慢请求，保证刷新发生时仍是脏状态。
+    mockJava.fullUpdateGraphJava.mockImplementation(() => new Promise(() => undefined));
+    const item = container.querySelector('[draggable="true"]') as HTMLElement;
+    fireEvent.click(within(item).getByText('ss_sgd_train'));
+    await waitFor(() => expect(counterText('1 nodes · 0 edges')).toBeTruthy());
+    graphDetailData = { nodes: [], edges: [] };
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['graph-detail'] });
+    });
+    expect(counterText('1 nodes · 0 edges')).toBeTruthy();
+  });
+
+  it('运行中节点状态来自 graph/node/status 覆盖层', async () => {
+    graphDetailData = {
+      nodes: [{ graphNodeId: 'g1-node-1', codeName: 'ml.train/ss_sgd_train', label: 'Train', x: 10, y: 10, status: 'STAGING' }],
+      edges: [],
+    };
+    mockJava.listGraphNodeStatusJava.mockResolvedValue({ finished: false, nodes: [{ graphNodeId: 'g1-node-1', status: 'RUNNING' }] });
+    renderPage();
+    await waitFor(() => expect(screen.queryAllByText('运行中').length + screen.queryAllByText('Running').length).toBeGreaterThan(0));
   });
 });

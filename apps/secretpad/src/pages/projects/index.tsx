@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, Button, Badge, Modal, ConfirmDialog, toast } from '@secretpad/design-system';
+import { Card, Button, Badge, Modal, ConfirmDialog, FormField, Input, Select, Textarea, Tour, toast } from '@secretpad/design-system';
+import { PAGE_TOUR_KEYS, usePageTour } from '../../features/guide-tour';
+import { GraphCountPopover, JobCountPopover } from './count-popover';
 import type { Project, JobExecution, ProjectNodeVO, ProjectDatatableBase } from '@secretpad/api-client';
 import { apiClient } from '@secretpad/api-client';
 import { useTranslation } from '../../shared/lib/i18n';
-import { AccessGuard } from '../../features/auth/ui/access-guard';
-import { Platform } from '../../shared/lib/platform';
+import { usePlatform } from '../../shared/lib/platform';
 import { JobDetailModal } from '../../features/job-detail';
+import { CreateProjectWizard, validateProjectDescription, validateProjectName, PROJECT_DESC_MAX, PROJECT_NAME_MAX } from '../../features/create-project';
+import { filterProjects, projectPermissions, projectCounts, isDeleteConfirmed } from './project-list.logic';
+import type { ModeFilter } from './project-list.logic';
+import { NODE_STATUS, normalizeStatus, statusBadge } from '@secretpad/dag-next';
 
 /**
  * 项目列表与详情页面。
@@ -26,14 +31,13 @@ export const ProjectsPage: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [search, setSearch] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const platform = usePlatform();
+  const perms = projectPermissions(platform);
 
-  // New Project Form
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [computeMode, setComputeMode] = useState<'MPC' | 'FL' | 'TEE' | 'HE'>('MPC');
+  const [search, setSearch] = useState('');
+  const [modeFilter, setModeFilter] = useState<ModeFilter>('ALL');
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Detail drawer
   const [detailProject, setDetailProject] = useState<Project | null>(null);
@@ -42,9 +46,11 @@ export const ProjectsPage: React.FC = () => {
   const [editProject, setEditProject] = useState<Project | null>(null);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
+  const [editErrors, setEditErrors] = useState<{ name: string | null; description: string | null }>({ name: null, description: null });
 
   // Delete confirm
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState('');
 
   // Add node / datatable modal
   const [addNodeOpen, setAddNodeOpen] = useState(false);
@@ -65,6 +71,8 @@ export const ProjectsPage: React.FC = () => {
     queryFn: () => apiClient.getProjects(),
   });
   const projects = projectsQuery.data ?? [];
+  // 旧版 project-list Tour：只有 1 个项目时首次提示「进入项目」（localStorage ProjectListTour）。
+  const projectTour = usePageTour(PAGE_TOUR_KEYS.projectList, projects.length === 1);
 
   const invalidateProjects = () => queryClient.invalidateQueries({ queryKey: ['projects'] });
 
@@ -98,22 +106,9 @@ export const ProjectsPage: React.FC = () => {
   });
   const tables = tablesQuery.data ?? [];
 
-  const createMutation = useMutation({
-    mutationFn: (input: { projectName: string; description: string; computeMode: string }) =>
-      apiClient.createProject({ ...input, nodes: [] }),
-    onSuccess: () => {
-      invalidateProjects();
-      setIsModalOpen(false);
-      setName('');
-      setDescription('');
-      toast.success(t('projects.createSuccess'));
-    },
-    onError: (e) => setError(e instanceof Error ? e.message : t('projects.createError')),
-  });
-
   const updateMutation = useMutation({
     mutationFn: () =>
-      apiClient.updateProject({ projectId: editProject!.projectId, name: editName, description: editDescription }),
+      apiClient.updateProject({ projectId: editProject!.projectId, name: editName.trim(), description: editDescription.trim() }),
     onSuccess: () => {
       invalidateProjects();
       setEditProject(null);
@@ -187,17 +182,26 @@ export const ProjectsPage: React.FC = () => {
     onError: (e) => setError(e instanceof Error ? e.message : String(e)),
   });
 
-  const handleCreateProject = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    createMutation.mutate({ projectName: name, description, computeMode });
-  };
-
   const openEdit = (project: Project) => {
     setEditProject(project);
     setEditName(project.projectName || project.name || '');
     setEditDescription(project.description || '');
+    setEditErrors({ name: null, description: null });
   };
+
+  const submitEdit = () => {
+    const errs = { name: validateProjectName(editName), description: validateProjectDescription(editDescription) };
+    setEditErrors(errs);
+    if (errs.name || errs.description) return;
+    updateMutation.mutate();
+  };
+
+  const openDelete = (project: Project) => {
+    setDeleteTarget(project);
+    setDeleteConfirmName('');
+  };
+
+  const openDag = (projectId: string) => navigate({ to: '/dag', search: { projectId } });
 
   const openAddTable = () => {
     const firstNode = detailProject?.nodes?.[0]?.nodeId || '';
@@ -216,25 +220,12 @@ export const ProjectsPage: React.FC = () => {
     setJobDetailJobId('');
   };
 
-  const filteredProjects = projects.filter((p) =>
-    (p.projectName || p.name || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredProjects = filterProjects(projects, search, modeFilter);
 
   const projectNodeNames = (project: Project) =>
     (project?.nodes || []).map((n) => n?.nodeName || n?.nodeId || '').filter(Boolean).join(', ');
 
-  const jobStatusBadge = (status: string) => {
-    switch (status) {
-      case 'RUNNING':
-        return 'processing';
-      case 'SUCCEEDED':
-        return 'success';
-      case 'FAILED':
-        return 'error';
-      default:
-        return 'default';
-    }
-  };
+  const jobStatusBadge = (status: string) => statusBadge(status);
 
   return (
     <div className="space-y-6">
@@ -244,7 +235,7 @@ export const ProjectsPage: React.FC = () => {
           <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('projects.title')}</h2>
           <p className="text-xs text-gray-500">{t('projects.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <input
             type="text"
             placeholder={t('projects.searchPlaceholder')}
@@ -252,9 +243,21 @@ export const ProjectsPage: React.FC = () => {
             onChange={(e) => setSearch(e.target.value)}
             className="px-3 py-1.5 rounded-lg text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
           />
-          <Button variant="primary" size="md" icon={<span>＋</span>} onClick={() => setIsModalOpen(true)}>
-            {t('projects.create')}
-          </Button>
+          <Select
+            className="w-36"
+            value={modeFilter}
+            onChange={(v) => setModeFilter(v as ModeFilter)}
+            options={[
+              { value: 'ALL', label: t('projects.modeFilterAll') },
+              { value: 'MPC', label: t('projects.modeFilterMpc') },
+              { value: 'TEE', label: t('projects.modeFilterTee') },
+            ]}
+          />
+          {perms.canCreate && (
+            <Button variant="primary" size="md" icon={<span>＋</span>} onClick={() => setIsWizardOpen(true)} data-tour="project-create">
+              {t('projects.create')}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -265,100 +268,65 @@ export const ProjectsPage: React.FC = () => {
       )}
 
       {/* Project Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredProjects.map((project) => (
-          <Card
-            key={project.projectId}
-            className="hover:shadow-md transition-all flex flex-col justify-between cursor-pointer"
-            onClick={() => setDetailProject(project)}
-          >
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <span className="px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                  Mode: {project.computeMode}
-                </span>
-                <Badge status={project.status === 'ACTIVE' ? 'success' : 'default'}>
-                  {project.status}
-                </Badge>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-tour="project-list">
+        {filteredProjects.map((project) => {
+          const counts = projectCounts(project);
+          return (
+            <Card
+              key={project.projectId}
+              className="hover:shadow-md transition-all flex flex-col justify-between cursor-pointer"
+              onClick={() => setDetailProject(project)}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                    {t('projects.modeTag', { mode: project.computeMode })}
+                  </span>
+                  <Badge status={project.status === 'ACTIVE' ? 'success' : 'default'}>{project.status}</Badge>
+                </div>
+
+                <h3 className="font-bold text-base text-gray-900 dark:text-gray-100 mb-1.5">{project.projectName}</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-3">{project.description || t('projects.noDescription')}</p>
+                <div className="flex items-center gap-4 text-xs text-gray-500 mb-3">
+                  <span>
+                    {t('projects.graphCount')}: <GraphCountPopover projectId={project.projectId} count={counts.graphCount} />
+                  </span>
+                  <span>
+                    {t('projects.jobCount')}: <JobCountPopover projectId={project.projectId} count={counts.jobCount} />
+                  </span>
+                </div>
               </div>
 
-              <h3 className="font-bold text-base text-gray-900 dark:text-gray-100 mb-1.5">{project.projectName}</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-4">{project.description || t('projects.noDescription')}</p>
-            </div>
-
-            <div className="pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-1 text-gray-500">
-                <span>{t('projects.joinedNodes')}:</span>
-                <span className="font-semibold text-gray-700 dark:text-gray-300 truncate max-w-[120px]">
-                  {projectNodeNames(project) || '-'}
-                </span>
+              <div className="pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1 text-gray-500 min-w-0">
+                  <span>{t('projects.joinedNodes')}:</span>
+                  <span className="font-semibold text-gray-700 dark:text-gray-300 truncate max-w-[110px]">
+                    {projectNodeNames(project) || '-'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="link" data-tour="project-open-dag" onClick={(e) => { e.stopPropagation(); openDag(project.projectId); }}>
+                    {t('projects.openDagShort')}
+                  </Button>
+                  {perms.canManage && (
+                    <>
+                      <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); openEdit(project); }}>{t('projects.edit')}</Button>
+                      <Button size="sm" variant="danger" onClick={(e) => { e.stopPropagation(); openDelete(project); }}>{t('projects.delete')}</Button>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-1">
-                <AccessGuard access={{ types: [Platform.CENTER] }}>
-                  <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); openEdit(project); }}>{t('projects.edit')}</Button>
-                  <Button size="sm" variant="danger" onClick={(e) => { e.stopPropagation(); setDeleteTarget(project); }}>{t('projects.delete')}</Button>
-                </AccessGuard>
-              </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
       </div>
 
       {filteredProjects.length === 0 && !error && !projectsQuery.error && (
         <div className="text-center text-xs text-gray-400 py-10">{t('projects.noProjects')}</div>
       )}
 
-      {/* Create Project Modal */}
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title={t('projects.modalTitle')}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setIsModalOpen(false)}>{t('projects.cancel')}</Button>
-            <Button variant="primary" onClick={handleCreateProject} loading={createMutation.isPending}>{t('projects.createConfirm')}</Button>
-          </>
-        }
-      >
-        <form onSubmit={handleCreateProject} className="space-y-4 text-xs">
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('projects.nameLabel')}</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t('projects.namePlaceholder')}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('projects.modeLabel')}</label>
-            <select
-              value={computeMode}
-              onChange={(e) => setComputeMode(e.target.value as 'MPC' | 'FL' | 'TEE' | 'HE')}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
-            >
-              <option value="MPC">{t('projects.modeMPC')}</option>
-              <option value="FL">{t('projects.modeFL')}</option>
-              <option value="TEE">{t('projects.modeTEE')}</option>
-              <option value="HE">{t('projects.modeHE')}</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('projects.descLabel')}</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              placeholder={t('projects.descPlaceholder')}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-        </form>
-      </Modal>
+      {/* Create Project Wizard */}
+      <CreateProjectWizard isOpen={isWizardOpen} onClose={() => setIsWizardOpen(false)} />
 
       {/* Edit Project Modal */}
       <Modal
@@ -368,29 +336,26 @@ export const ProjectsPage: React.FC = () => {
         footer={
           <>
             <Button variant="ghost" onClick={() => setEditProject(null)}>{t('common.cancel')}</Button>
-            <Button variant="primary" onClick={() => updateMutation.mutate()} loading={updateMutation.isPending}>{t('common.save')}</Button>
+            <Button variant="primary" onClick={submitEdit} loading={updateMutation.isPending}>{t('common.save')}</Button>
           </>
         }
       >
         <div className="space-y-4 text-xs">
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('projects.nameLabel')}</label>
-            <input
-              type="text"
+          <FormField label={t('projects.nameLabel')} required error={editErrors.name ? t(editErrors.name, { max: PROJECT_NAME_MAX }) : undefined}>
+            <Input
               value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
+              invalid={!!editErrors.name}
+              onChange={(e) => { setEditName(e.target.value); setEditErrors((p) => ({ ...p, name: null })); }}
             />
-          </div>
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('projects.descLabel')}</label>
-            <textarea
+          </FormField>
+          <FormField label={t('projects.descLabel')} error={editErrors.description ? t(editErrors.description, { max: PROJECT_DESC_MAX }) : undefined}>
+            <Textarea
               value={editDescription}
-              onChange={(e) => setEditDescription(e.target.value)}
               rows={3}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
+              invalid={!!editErrors.description}
+              onChange={(e) => { setEditDescription(e.target.value); setEditErrors((p) => ({ ...p, description: null })); }}
             />
-          </div>
+          </FormField>
         </div>
       </Modal>
 
@@ -424,9 +389,9 @@ export const ProjectsPage: React.FC = () => {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('projects.joinedNodes')}</h4>
-                <AccessGuard access={{ types: [Platform.CENTER] }}>
+                {perms.canManage && (<>
                   <Button size="sm" variant="outline" onClick={() => { setAddNodeSelected(''); setAddNodeOpen(true); }}>＋ {t('projects.addNode')}</Button>
-                </AccessGuard>
+                </>)}
               </div>
               <div className="flex flex-wrap gap-2">
                 {(detailData?.nodes || detailProject.nodes || []).map((n) => (
@@ -442,9 +407,9 @@ export const ProjectsPage: React.FC = () => {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('projects.datatables')}</h4>
-                <AccessGuard access={{ types: [Platform.CENTER] }}>
+                {perms.canManage && (<>
                   <Button size="sm" variant="outline" onClick={openAddTable}>＋ {t('projects.addDatatable')}</Button>
-                </AccessGuard>
+                </>)}
               </div>
               <div className="space-y-3">
                 {(detailData?.nodes || detailProject.nodes || []).map((node: ProjectNodeVO) => (
@@ -457,7 +422,7 @@ export const ProjectsPage: React.FC = () => {
                         {(node.datatables || []).map((tbl: ProjectDatatableBase) => (
                           <Badge key={tbl.datatableId} status="default" className="flex items-center gap-1.5">
                             <span>{tbl.datatableName || tbl.datatableId}</span>
-                            <AccessGuard access={{ types: [Platform.CENTER] }}>
+                            {perms.canManage && (<>
                               <button
                                 className="text-gray-400 hover:text-red-500"
                                 onClick={() => setRemoveTableTarget({ nodeId: node.nodeId || '', datatableId: tbl.datatableId || '' })}
@@ -465,7 +430,7 @@ export const ProjectsPage: React.FC = () => {
                               >
                                 ✕
                               </button>
-                            </AccessGuard>
+                            </>)}
                           </Badge>
                         ))}
                       </div>
@@ -477,9 +442,7 @@ export const ProjectsPage: React.FC = () => {
 
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('projects.jobs')}</h4>
-              <AccessGuard access={{ types: [Platform.CENTER] }}>
-                <Button size="sm" variant="primary" onClick={() => navigate({ to: '/dag' })}>{t('projects.openDag')}</Button>
-              </AccessGuard>
+              <Button size="sm" variant="primary" onClick={() => openDag(detailProject.projectId)}>{t('projects.openDag')}</Button>
             </div>
 
             {jobsQuery.isLoading && <div className="text-xs text-gray-400">{t('common.loading')}</div>}
@@ -495,12 +458,10 @@ export const ProjectsPage: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <Badge status={jobStatusBadge(job.status)}>{job.status}</Badge>
-                    {job.status === 'RUNNING' && (
-                      <AccessGuard access={{ types: [Platform.CENTER] }}>
-                        <Button size="sm" variant="danger" loading={stopJobMutation.isPending} onClick={(e) => { e.stopPropagation(); stopJobMutation.mutate(job); }}>
-                          {t('projects.stopJob')}
-                        </Button>
-                      </AccessGuard>
+                    {normalizeStatus(job.status) === NODE_STATUS.RUNNING && perms.canManage && (
+                      <Button size="sm" variant="danger" loading={stopJobMutation.isPending} onClick={(e) => { e.stopPropagation(); stopJobMutation.mutate(job); }}>
+                        {t('projects.stopJob')}
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -599,17 +560,41 @@ export const ProjectsPage: React.FC = () => {
         onCancel={() => setRemoveTableTarget(null)}
       />
 
-      {/* Delete Confirm Dialog */}
-      <ConfirmDialog
+      {/* Delete Confirm: the exact project name must be typed to enable confirm */}
+      <Modal
         isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
         title={t('projects.delete')}
-        message={t('projects.deleteConfirm')}
-        danger
-        loading={deleteMutation.isPending}
-        confirmText={t('projects.delete')}
-        cancelText={t('common.cancel')}
-        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.projectId)}
-        onCancel={() => setDeleteTarget(null)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>{t('common.cancel')}</Button>
+            <Button
+              variant="danger"
+              loading={deleteMutation.isPending}
+              disabled={!deleteTarget || !isDeleteConfirmed(deleteTarget, deleteConfirmName)}
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.projectId)}
+            >
+              {t('projects.delete')}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-xs">
+          <p className="text-gray-600 dark:text-gray-300">{t('projects.deleteConfirm')}</p>
+          <FormField label={t('projects.deleteTypeName', { name: deleteTarget?.projectName || deleteTarget?.name || '' })}>
+            <Input
+              value={deleteConfirmName}
+              placeholder={deleteTarget?.projectName || deleteTarget?.name || ''}
+              onChange={(e) => setDeleteConfirmName(e.target.value)}
+            />
+          </FormField>
+        </div>
+      </Modal>
+      <Tour
+        open={projectTour.open}
+        onClose={projectTour.close}
+        steps={[{ target: '[data-tour="project-open-dag"]', title: t('guideTour.projectList.title'), content: t('guideTour.dag.desc') }]}
+        labels={{ next: t('guideTour.next'), prev: t('guideTour.prev'), finish: t('guideTour.finish'), skip: t('guideTour.skip') }}
       />
     </div>
   );

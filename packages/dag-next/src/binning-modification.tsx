@@ -12,6 +12,7 @@
  * 零外部依赖，Tailwind CSS 样式。
  */
 import React, { useCallback, useRef, useState } from 'react';
+import { binModificationsUnSerializer } from './custom-serializers';
 
 /* -------------------------------------------------------------------------- */
 /* 类型定义（对应原版 types.ts）                                               */
@@ -75,6 +76,14 @@ export interface BinningModificationProps {
   onSave?: (data: BinningData) => void | Promise<void>;
   /** 文案标签。 */
   labels?: BinningModificationLabels;
+  /**
+   * 合并（旧版语义）：把选中分箱标记 markForMerge 后交由宿主保存配置并执行节点，
+   * 引擎计算合并后的新分箱（WOE 需重新计算，不能在前端近似）。未提供时回退为本地合并。
+   */
+  onMerge?: (data: BinningData) => void | Promise<void>;
+  /** 数据来源：upstream 上游输出 / latest 最新保存的结果。 */
+  source?: 'upstream' | 'latest';
+  onSourceChange?: (source: 'upstream' | 'latest') => void;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -157,7 +166,12 @@ export const BinningModification: React.FC<BinningModificationProps> = ({
   readOnly = false,
   onSave,
   labels = {},
+  onMerge,
+  source,
+  onSourceChange,
 }) => {
+  const [defaultWoe, setDefaultWoe] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
   const [currentData, setCurrentData] = useState<BinningData | null>(data);
   const undoStackRef = useRef<BinningData[]>([]);
   const redoStackRef = useRef<BinningData[]>([]);
@@ -209,10 +223,22 @@ export const BinningModification: React.FC<BinningModificationProps> = ({
     setSelectedBins(new Map());
   };
 
-  const handleMerge = () => {
+  const handleMerge = async () => {
     if (!currentData) return;
     pushHistory();
     const newData = cloneData(currentData);
+    if (onMerge) {
+      // 旧版：标记 markForMerge → 保存配置 → 执行单节点，由引擎输出合并后的分箱。
+      newData.variableBins = newData.variableBins.map((record) => {
+        const keys = selectedBins.get(record.key);
+        if (!keys || keys.size < 2) return record;
+        return { ...record, bins: record.bins.map((b) => (keys.has(b.key) && b.label !== 'ELSE' ? { ...b, markForMerge: true } : b)) };
+      });
+      setCurrentData(newData);
+      setSelectedBins(new Map());
+      await onMerge(newData);
+      return;
+    }
     newData.variableBins = newData.variableBins.map((record) => {
       const keys = selectedBins.get(record.key);
       if (keys && keys.size >= 2) {
@@ -222,6 +248,34 @@ export const BinningModification: React.FC<BinningModificationProps> = ({
     });
     setCurrentData(newData);
     setSelectedBins(new Map());
+  };
+
+  /** 编辑默认 WOE：设置所有 WOE 特征 ELSE 分箱的填充值（旧版 edit-default-woe）。 */
+  const handleApplyDefaultWoe = () => {
+    if (!currentData || defaultWoe === '' || Number.isNaN(Number(defaultWoe))) return;
+    pushHistory();
+    const woe = Number(defaultWoe);
+    const next = cloneData(currentData);
+    next.variableBins = next.variableBins.map((r) => (r.isWoe ? { ...r, bins: r.bins.map((b) => (b.label === 'ELSE' ? { ...b, woe } : b)) } : r));
+    setCurrentData(next);
+  };
+
+  /** 上传分箱规则（JSON：表单格式或引擎 variableBins 格式）。 */
+  const handleUpload = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        const first = parsed?.variableBins?.[0];
+        const next: BinningData | undefined = first && 'featureName' in first ? (binModificationsUnSerializer(parsed) as BinningData | undefined) : (parsed as BinningData);
+        if (!next?.variableBins) return;
+        pushHistory();
+        setCurrentData(next);
+      } catch {
+        /* 非法文件忽略 */
+      }
+    };
+    reader.readAsText(file);
   };
 
   const handleSave = async () => {
@@ -263,7 +317,7 @@ export const BinningModification: React.FC<BinningModificationProps> = ({
       {/* 工具栏（对应原版 toolbar/index.tsx） */}
       {!readOnly && (
         <div className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-800 flex-wrap">
-          <button className={`${btnCls} border-gray-700 hover:border-cyan-500 text-gray-300`} onClick={handleMerge} title={labels.merge ?? '合并选中分箱'}>
+          <button className={`${btnCls} border-gray-700 hover:border-cyan-500 text-gray-300`} onClick={() => void handleMerge()} title={labels.merge ?? '合并选中分箱'}>
             🔗 {labels.merge ?? '合并'}
           </button>
           <button className={`${btnCls} border-gray-700 hover:border-cyan-500 text-gray-300`} onClick={handleUndo} disabled={!canUndo} title={labels.undo ?? '撤销'}>
@@ -278,6 +332,42 @@ export const BinningModification: React.FC<BinningModificationProps> = ({
           <button className={`${btnCls} border-gray-700 hover:border-green-500 text-gray-300`} onClick={() => exportCsv(currentData)} title={labels.export ?? '导出 CSV'}>
             📥 {labels.export ?? '导出'}
           </button>
+          <button className={`${btnCls} border-gray-700 hover:border-green-500 text-gray-300`} onClick={() => fileRef.current?.click()} title="上传分箱">
+            📤 上传
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleUpload(f);
+              e.target.value = '';
+            }}
+          />
+          <span className="inline-flex items-center gap-1">
+            <input
+              value={defaultWoe}
+              onChange={(e) => setDefaultWoe(e.target.value)}
+              placeholder="默认WOE"
+              className="w-16 px-1 py-0.5 text-[10px] rounded bg-gray-800 border border-gray-700"
+            />
+            <button className={`${btnCls} border-gray-700 text-gray-300`} onClick={handleApplyDefaultWoe}>
+              ✔
+            </button>
+          </span>
+          {onSourceChange && (
+            <select
+              aria-label="binning source"
+              value={source ?? 'upstream'}
+              onChange={(e) => onSourceChange(e.target.value as 'upstream' | 'latest')}
+              className="px-1 py-0.5 text-[10px] rounded bg-gray-800 border border-gray-700"
+            >
+              <option value="upstream">上游输出</option>
+              <option value="latest">最新结果</option>
+            </select>
+          )}
           <div className="flex-1" />
           <button className={`${btnCls} border-cyan-600 bg-cyan-700/30 hover:bg-cyan-600/40 text-cyan-300 font-medium`} onClick={handleSave} disabled={saving}>
             💾 {saving ? '...' : (labels.save ?? '保存')}

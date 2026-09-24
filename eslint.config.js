@@ -47,10 +47,21 @@ export default tseslint.config(
     },
   },
   {
-    // Test files may use any/dev deps and console freely.
+    // Workspace libraries are consumed through the app's Vite graph; their barrels
+    // (`export *`) and co-located helpers are not HMR boundaries, so the
+    // fast-refresh export rule only applies to apps/.
+    files: ['packages/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
+  {
+    // Test files may use any/dev deps and console freely; `vi.mock` factories
+    // need `typeof import('…')` type annotations.
     files: ['**/*.test.{ts,tsx}', '**/test/**'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/consistent-type-imports': 'off',
       'no-console': 'off',
     },
   }

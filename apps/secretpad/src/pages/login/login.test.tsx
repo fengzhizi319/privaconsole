@@ -21,7 +21,7 @@ const renderWithI18n = (ui: React.ReactNode) => render(<I18nProvider>{ui}</I18nP
 
 describe('LoginPage', () => {
   it('calls login with username and password on submit', async () => {
-    mockLogin.mockResolvedValueOnce(undefined);
+    mockLogin.mockResolvedValueOnce({ name: 'admin', platformType: 'CENTER' });
     renderWithI18n(<LoginPage onLoginSuccess={mockOnLoginSuccess} />);
 
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'admin' } });
@@ -30,13 +30,21 @@ describe('LoginPage', () => {
 
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith('admin', '12345678');
-      expect(mockOnLoginSuccess).toHaveBeenCalled();
+      expect(mockOnLoginSuccess).toHaveBeenCalledWith({ name: 'admin', platformType: 'CENTER' });
     });
+  });
+
+  it('does not prefill default credentials', () => {
+    renderWithI18n(<LoginPage onLoginSuccess={mockOnLoginSuccess} />);
+    expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
   });
 
   it('shows an error message when login fails', async () => {
     mockLogin.mockRejectedValueOnce(new Error('invalid password'));
     renderWithI18n(<LoginPage onLoginSuccess={mockOnLoginSuccess} />);
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'wrong' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Sign In/ }));
 

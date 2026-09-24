@@ -27,6 +27,12 @@ describe('App', () => {
     expect(await screen.findByText('Console Dashboard')).toBeTruthy();
   });
 
+  it('shows the real pending message count in the header', async () => {
+    renderWithI18n(<App />);
+    const badge = await screen.findByTestId('pending-badge');
+    expect(badge.textContent).toBe('3');
+  });
+
   it('shows header and sidebar navigation', async () => {
     renderWithI18n(<App />);
     expect(await screen.findByText('SecretPad')).toBeTruthy();

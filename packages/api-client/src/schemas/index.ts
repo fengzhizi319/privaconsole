@@ -36,6 +36,8 @@ export const NodeSchema = z.object({
   nodeAuthenticationCode: z.string().optional(),
   token: z.string().optional(),
   tokenStatus: z.string().optional(),
+  /** NodeVO.instId：AUTONOMY 下节点所属机构（写权限按机构判断）。 */
+  instId: z.string().optional(),
   // legacy optional fields kept for local mock fallbacks
   ip: z.string().optional(),
   cpu: z.number().optional(),
@@ -137,7 +139,8 @@ export const JobExecutionSchema = z.object({
   jobId: z.string(),
   projectId: z.string(),
   name: z.string(),
-  status: z.enum(['RUNNING', 'SUCCEEDED', 'FAILED', 'PENDING']),
+  /** Java GraphJobStatus (same values as @secretpad/dag-next JOB_STATUS). */
+  status: z.enum(['STAGING', 'INITIALIZED', 'RUNNING', 'STOPPED', 'SUCCEED', 'FAILED']),
   duration: z.string().optional(),
   createTime: z.string(),
   errMsg: z.string().optional(),
@@ -213,6 +216,10 @@ export const ServingDetailVOSchema = z.object({
 export type ServingDetailVO = z.infer<typeof ServingDetailVOSchema>;
 
 export const ModelPackInfoVOSchema = z.object({
+  /** 模型打包时快照的训练流（Java GraphDetailVO，原样透传，用 normalizeGraphDetail 解析）。 */
+  graphDetailVO: z.unknown().optional(),
+  /** 参与模型打包的 graphNodeId 列表（旧 model-detail 用来高亮链路）。 */
+  modelGraphDetail: z.array(z.string()).optional().nullable(),
   modelStats: z.string().optional(),
   servingDetails: z.array(ServingDetailSchema).optional(),
 });

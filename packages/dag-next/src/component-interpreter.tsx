@@ -54,6 +54,10 @@ export interface ComponentInterpreterProps {
   fetchMetadata: (component: DAGComponentDef) => Promise<InterpreterMetadata | null>;
   onClose: () => void;
   labels?: ComponentInterpreterLabels;
+  /** 描述 / 属性名翻译（与右侧配置面板同一翻译器）。 */
+  translate?: (text: string) => string;
+  /** 计算模式（面板样式注册表按模式区分）。 */
+  computeMode?: 'MPC' | 'TEE';
 }
 
 /** 渲染单个输入/输出端口。 */
@@ -77,7 +81,7 @@ const IoPortRow: React.FC<{ port: IoPortMeta; index: number; allowedTypesLabel: 
  * 打开时按 component 的 domain/name 拉取完整定义并解释展示；
  * 属性部分以只读 `AttributeForm` 呈现，帮助用户在拖入算子前理解各参数含义。
  */
-export const ComponentInterpreter: React.FC<ComponentInterpreterProps> = ({ component, fetchMetadata, onClose, labels = {} }) => {
+export const ComponentInterpreter: React.FC<ComponentInterpreterProps> = ({ component, fetchMetadata, onClose, labels = {}, translate, computeMode }) => {
   const [metadata, setMetadata] = useState<InterpreterMetadata | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -149,7 +153,7 @@ export const ComponentInterpreter: React.FC<ComponentInterpreterProps> = ({ comp
                   {labels.description ?? '描述'}
                 </div>
                 <div className="p-2.5 rounded bg-gray-900 border border-gray-800 text-gray-300 text-[11px] leading-relaxed">
-                  {metadata.desc}
+                  {translate ? translate(metadata.desc) : metadata.desc}
                 </div>
               </div>
             )}
@@ -192,7 +196,16 @@ export const ComponentInterpreter: React.FC<ComponentInterpreterProps> = ({ comp
                   {labels.attributes ?? '可配置属性'} ({metadata.attrs.length})
                 </div>
                 <div className="p-3 rounded bg-gray-950 border border-gray-800">
-                  <AttributeForm defs={metadata.attrs} nodeDef={undefined} readOnly labels={{ advanced: labels.attributes ?? '可配置属性' }} />
+                  <AttributeForm
+                    defs={metadata.attrs}
+                    inputs={metadata.inputs as Array<Record<string, unknown>> | undefined}
+                    codeName={codeName}
+                    computeMode={computeMode}
+                    translate={translate}
+                    nodeDef={undefined}
+                    readOnly
+                    labels={{ advanced: labels.attributes ?? '可配置属性' }}
+                  />
                 </div>
               </div>
             )}

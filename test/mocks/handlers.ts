@@ -31,6 +31,21 @@ const fail = (code: number, msg: string) =>
   HttpResponse.json({ status: { code, msg }, data: null });
 
 export const handlers = [
+  // 用户上下文（user/get）：应用加载时刷新 platformType / deployMode。
+  http.post(`${BASE}/api/v1alpha1/user/get`, () =>
+    ok({
+      name: 'admin',
+      ownerId: 'kuscia-system',
+      platformType: 'CENTER',
+      platformNodeId: 'kuscia-system',
+      ownerType: 'CENTER',
+      deployMode: 'ALL-IN-ONE',
+    })
+  ),
+
+  // 待处理消息数（message/pending）：Header 角标。
+  http.post(`${BASE}/api/v1alpha1/message/pending`, () => ok(3)),
+
   // 登录：返回 token 与用户上下文，验证 token 落盘逻辑。
   http.post(`${BASE}/api/v1alpha1/user/login`, async ({ request }) => {
     const body = (await request.json()) as { name?: string; password?: string; passwordHash?: string };
@@ -91,8 +106,115 @@ export const handlers = [
 
   // 项目任务列表：仪表盘 getJobs() 会逐项目拉取任务。
   // 响应为分页包裹结构 { data: [...], pageSize, pageTotal }，这里返回空列表。
+  // Java PageResponse：{ pageTotal, pageSize, total, data: ProjectJobSummaryVO[] }。
   http.post(`${BASE}/api/v1alpha1/project/job/list`, () =>
-    ok({ data: [], pageSize: 10, pageTotal: 0 })
+    ok({ data: [], pageSize: 10, pageTotal: 0, total: 0 })
+  ),
+
+  // ---------------- DAG / graph（Java 契约形状） ----------------
+  // component/list → Map<app, CompListVO{name, desc, version, comps[]}>。
+  http.post(`${BASE}/api/v1alpha1/component/list`, () =>
+    ok({
+      secretflow: {
+        name: 'secretflow',
+        desc: 'SecretFlow',
+        version: '1.0.0',
+        comps: [
+          { domain: 'data_prep', name: 'psi', version: '1.0.0', desc: 'PSI between two parties.' },
+          { domain: 'ml.train', name: 'ss_glm_train', version: '1.0.0', desc: 'SS-GLM training.' },
+        ],
+      },
+      trustedflow: {
+        name: 'trustedflow',
+        desc: 'TrustedFlow',
+        version: '0.1.0',
+        comps: [{ domain: 'data_prep', name: 'psi', version: '0.1.0', desc: 'TEE PSI.' }],
+      },
+    })
+  ),
+  // component/batch → 有序 ComponentDef[]（SF proto JSON，无 code_name）。
+  http.post(`${BASE}/api/v1alpha1/component/batch`, () =>
+    ok([
+      {
+        domain: 'data_prep',
+        name: 'psi',
+        version: '1.0.0',
+        attrs: [{ name: 'receiver_parties', type: 'AT_PARTY', atomic: { listMaxLengthInclusive: '2' } }],
+        inputs: [
+          { name: 'input_ds1', types: ['sf.table.individual'], attrs: [{ name: 'keys', colMinCntInclusive: '1', colMaxCntInclusive: '1' }] },
+          { name: 'input_ds2', types: ['sf.table.individual'], attrs: [{ name: 'keys', colMinCntInclusive: '1', colMaxCntInclusive: '1' }] },
+        ],
+        outputs: [{ name: 'psi_output', types: ['sf.table.vertical'] }, { name: 'report', types: ['sf.report'] }],
+      },
+    ])
+  ),
+  // component/i18n → Map<app, Map<"domain/name:version", Map<原文, 译文>>>。
+  http.post(`${BASE}/api/v1alpha1/component/i18n`, () =>
+    ok({ secretflow: { 'data_prep/psi:1.0.0': { psi: '隐私求交', receiver_parties: '结果接收方' } }, trustedflow: {} })
+  ),
+  http.post(`${BASE}/api/v1alpha1/graph/detail`, () =>
+    ok({
+      projectId: 'p1',
+      graphId: 'g1',
+      name: 'Graph 1',
+      nodes: [
+        {
+          graphNodeId: 'g1-node-1',
+          codeName: 'data_prep/psi',
+          label: '隐私求交',
+          x: 10,
+          y: 20,
+          inputs: ['', ''],
+          outputs: ['g1-node-1-output-0', 'g1-node-1-output-1'],
+          nodeDef: { domain: 'data_prep', name: 'psi', version: '1.0.0' },
+          status: 'STAGING',
+        },
+      ],
+      edges: [],
+      maxParallelism: 1,
+      dataSourceConfig: [{ editEnable: true, nodeId: 'alice', nodeName: 'alice', dataSourceName: 'default', dataSourceId: 'default-data-source' }],
+    })
+  ),
+  // graph/node/status：没有任务的节点为 STAGING。
+  http.post(`${BASE}/api/v1alpha1/graph/node/status`, () =>
+    ok({ finished: true, nodes: [{ graphNodeId: 'g1-node-1', status: 'STAGING', progress: 0, parties: [] }] })
+  ),
+  http.post(`${BASE}/api/v1alpha1/graph/node/output`, () =>
+    ok({
+      type: 'table',
+      codeName: 'data_prep/psi',
+      jobId: 'job1',
+      taskId: 'job1-g1-node-1',
+      graphID: 'g1',
+      gmtCreate: '2026-09-01T00:00:00Z',
+      meta: {
+        headers: [{ name: 'metas', type: 'AT_STRING' }],
+        rows: [
+          { path: 'job1-g1-node-1-output-0', nodeId: 'alice', nodeName: 'alice', type: 'embedded', fields: 'id,age', fieldTypes: 'str,int', tableId: 't1', dsId: 'default-data-source', datasourceType: 'LOCAL' },
+        ],
+      },
+      tabs: null,
+    })
+  ),
+  http.post(`${BASE}/api/v1alpha1/graph/node/max_index`, () => ok({ maxIndex: 32 })),
+  http.post(`${BASE}/api/v1alpha1/graph/start`, () => ok({ jobId: 'job1' })),
+  http.post(`${BASE}/api/v1alpha1/project/get`, () =>
+    ok({
+      projectId: 'p1',
+      projectName: 'Demo',
+      computeMode: 'MPC',
+      nodes: [{ nodeId: 'alice', nodeName: 'alice', nodeType: 'embedded', datatables: [{ datatableId: 't-alice', datatableName: 'alice.csv' }] }],
+    })
+  ),
+  http.post(`${BASE}/api/v1alpha1/project/datatable/get`, () =>
+    ok({
+      datatableId: 't-alice',
+      datatableName: 'alice.csv',
+      nodeId: 'alice',
+      nodeName: 'alice',
+      configs: [{ colName: 'id', colType: 'str', isAssociateKey: true }],
+      datatableVO: { datatableId: 't-alice', schema: [{ featureName: 'ignored', featureType: 'str' }] },
+    })
   ),
 
   // 登出：仅返回成功，验证本地 token 清理。

@@ -35,11 +35,41 @@ describe('apiClient.login', () => {
       response: new Response(),
     } as any);
 
-    const result = await apiClient.login('admin', 'hash');
-    expect(result).toEqual(user);
+    const result = await apiClient.login('admin', 'hash', 'sm3hash');
+    expect(result).toMatchObject(user);
     expect(localStorage.getItem('secretpad-token')).toBe('abc123');
-    expect(mockPost).toHaveBeenCalledWith('/api/v1alpha1/user/login', {
-      body: { name: 'admin', password: 'hash' },
+    expect(mockPost).toHaveBeenCalledWith('/api/login', {
+      body: { name: 'admin', passwordHash: 'hash', passwordHashSm3: 'sm3hash' },
+    });
+  });
+
+  it('takes platformType from platformType (not ownerType) and keeps a valid deployMode', async () => {
+    mockPost.mockResolvedValueOnce({
+      data: {
+        status: { code: 0 },
+        data: { token: 't', name: 'e', ownerId: 'alice', platformType: 'AUTONOMY', ownerType: 'P2P', deployMode: 'tee' },
+      },
+      error: undefined,
+      response: new Response(),
+    } as any);
+    const result = await apiClient.login('e', 'hash');
+    expect(result.platformType).toBe('AUTONOMY');
+    expect(result.ownerType).toBe('P2P');
+    expect(result.deployMode).toBe('TEE');
+  });
+
+  it('falls back to /api/v1alpha1/user/login when /api/login is missing', async () => {
+    mockPost
+      .mockResolvedValueOnce({ data: undefined, error: {}, response: new Response(null, { status: 404 }) } as any)
+      .mockResolvedValueOnce({
+        data: { status: { code: 0 }, data: { token: 'x', name: 'admin', platformType: 'CENTER' } },
+        error: undefined,
+        response: new Response(),
+      } as any);
+    const result = await apiClient.login('admin', 'hash');
+    expect(result.token).toBe('x');
+    expect(mockPost).toHaveBeenLastCalledWith('/api/v1alpha1/user/login', {
+      body: { name: 'admin', passwordHash: 'hash', password: 'hash' },
     });
   });
 
@@ -280,7 +310,7 @@ describe('newly migrated endpoints (project/scheduled/user/node/graph/model/misc
     expect(jobs[0].jobId).toBe('j1');
   });
 
-  it('resetNodeUserPassword posts hashed credentials', async () => {
+  it('resetNodeUserPassword posts hashed credentials to the remote (main-port) route', async () => {
     ok('reset-ok');
     const res = await apiClient.resetNodeUserPassword({
       nodeId: 'alice',
@@ -290,7 +320,7 @@ describe('newly migrated endpoints (project/scheduled/user/node/graph/model/misc
     });
     expect(res).toBe('reset-ok');
     expect(mockPost).toHaveBeenCalledWith(
-      '/api/v1alpha1/user/node/resetPassword',
+      '/api/v1alpha1/user/remote/resetPassword',
       expect.objectContaining({ body: { nodeId: 'alice', name: 'admin', passwordHash: 'old', newPasswordHash: 'new' } })
     );
   });
@@ -319,14 +349,6 @@ describe('newly migrated endpoints (project/scheduled/user/node/graph/model/misc
     expect(res.secretflowImage).toBe('secretflow:1.0.0');
   });
 
-  it('createVoteSync posts db sync requests', async () => {
-    ok({});
-    await apiClient.createVoteSync([{ tableName: 't', operation: 'INSERT' } as any]);
-    expect(mockPost).toHaveBeenCalledWith(
-      '/api/v1alpha1/vote_sync/create',
-      expect.objectContaining({ body: { dbSyncRequests: [{ tableName: 't', operation: 'INSERT' }] } })
-    );
-  });
 
   it('getCloudLogs hits cloud_log/sls', async () => {
     ok({ logs: ['cloud log'] });

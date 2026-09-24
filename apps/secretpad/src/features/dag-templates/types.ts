@@ -84,10 +84,15 @@ export interface TwoTableTemplateConfig extends Record<string, unknown> {
   senderNodeId?: string;
   receiverTableId?: string;
   senderTableId?: string;
-  receiverKey?: string;
-  senderKey?: string;
+  /** 关联键；快速配置可传多个（旧版 Form.List 关联键1..n）。 */
+  receiverKey?: string | string[];
+  senderKey?: string | string[];
   receiverPartition?: string;
   senderPartition?: string;
+  /** PSI 结果接收方（旧版 receiverPSI）；缺省为两方都接收。 */
+  receiverParties?: string[];
+  /** 特征列（PSI 模板用于全表统计节点）。 */
+  featureSelects?: { ss: string[] };
 }
 
 /**
@@ -126,8 +131,11 @@ export interface SanitizationTemplateConfig extends SingleTableTemplateConfig {
  */
 export interface RiskTemplateConfig extends TwoTableTemplateConfig {
   featureSelects: { ss: string[] };
-  labelSelects: { s: string };
+  /** 标签列；旧版快速配置为 `{ ss: [label] }`，向导为 `{ s }`，两者均可。 */
+  labelSelects: { s?: string; ss?: string[] };
   pred: { s: string };
+  /** 预测结果接收方（旧版 receiver）；缺省为 receiverNodeId。 */
+  predictReceiver?: string;
 }
 
 /**
@@ -135,8 +143,21 @@ export interface RiskTemplateConfig extends TwoTableTemplateConfig {
  */
 export interface TeeTemplateConfig extends TwoTableTemplateConfig {
   featureSelects: { ss: string[] };
-  labelSelects: { s: string };
+  labelSelects: { s?: string; ss?: string[] };
+  /** 以下为旧版 quick-config-risk-tee 字段。 */
+  trainIdSelect?: string[];
+  predictIdSelect?: string[];
+  saveId?: boolean;
+  saveLabel?: boolean;
+  /** 评估节点的标签列名 / 预测得分列名（默认 labelSelects / pred）。 */
+  label?: string;
+  score?: string;
 }
+
+/** 单值或数组 → 去空数组。 */
+export const toList = (v: string | string[] | undefined | null): string[] => (Array.isArray(v) ? v : v ? [v] : []).filter(Boolean);
+/** 标签列：兼容 `{ s }` 与 `{ ss: [..] }`。 */
+export const labelOf = (v: { s?: string; ss?: string[] } | undefined): string => v?.s || v?.ss?.[0] || '';
 
 /**
  * 引导式模板配置占位类型。

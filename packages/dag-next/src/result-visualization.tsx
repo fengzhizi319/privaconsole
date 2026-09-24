@@ -15,6 +15,9 @@
  */
 import React, { useMemo, useState } from 'react';
 import { Button } from '@secretpad/design-system';
+import { NodeResultView } from './result/result-view';
+import type { NodeResultViewProps } from './result/result-view';
+import { resultKindOf } from './result/output';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,8 +67,14 @@ export interface CorrelationHeatmapProps {
 }
 
 export interface ResultVisualizationProps {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 旧格式输出为任意 JSON，各分支按字段读取
   output: Record<string, any> | null;
   labels?: ResultVisualizationLabels;
+  /** 输出锚点 ID（DistData 结果展示用）。 */
+  outputId?: string;
+  codeName?: string;
+  downloadMode?: NodeResultViewProps['downloadMode'];
+  actions?: NodeResultViewProps['actions'];
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
@@ -423,9 +432,24 @@ export const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({ matrix, 
  * - `{ tabs: { ... } }` → 多 Tab 渲染（每 tab 递归）
  * - 其他 → JSON 预览
  */
-export const ResultVisualization: React.FC<ResultVisualizationProps> = ({ output, labels = {} }) => {
+export const ResultVisualization: React.FC<ResultVisualizationProps> = ({ output, labels = {}, outputId, codeName, downloadMode, actions }) => {
   if (!output) {
     return <span className="text-gray-500 text-[11px]">{labels.noOutput ?? 'No output'}</span>;
+  }
+
+  // SecretPad / SecretFlow 结果：按 DistData 类型（table/model/rule/report/sf.*）分派。
+  const distKind = resultKindOf(typeof output.type === 'string' ? output.type : undefined);
+  if (distKind !== 'unknown' || Array.isArray(output.tabs) || typeof output.tabs === 'string') {
+    return (
+      <NodeResultView
+        output={output}
+        outputId={outputId}
+        codeName={codeName}
+        downloadMode={downloadMode}
+        actions={actions}
+        labels={labels.noOutput ? { noResult: labels.noOutput } : undefined}
+      />
+    );
   }
 
   // Table type
@@ -480,8 +504,8 @@ export const ResultVisualization: React.FC<ResultVisualizationProps> = ({ output
         {tabs.map(([name, content]) => (
           <div key={name}>
             <div className="text-gray-400 text-[10px] mb-1 font-medium">{name}</div>
-            {typeof content === 'object' && content !== null && (content as any).type ? (
-              <ResultVisualization output={content as Record<string, any>} labels={labels} />
+            {typeof content === 'object' && content !== null && (content as { type?: unknown }).type ? (
+              <ResultVisualization output={content as Record<string, unknown>} labels={labels} />
             ) : (
               <div className="p-2 rounded bg-gray-900 border border-gray-800 font-mono text-[10px] text-gray-300 overflow-auto whitespace-pre-wrap">
                 {typeof content === 'string' ? content : safeJsonStringify(content)}

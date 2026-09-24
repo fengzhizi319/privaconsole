@@ -5,6 +5,7 @@ import { AppHeader } from '../widgets/AppHeader';
 import { useTranslation } from '../shared/lib/i18n';
 import { RouteGuard } from '../features/auth/ui/access-guard';
 import { useAuthStore } from '../features/auth/model/auth-store';
+import { GuideTourHost } from '../features/guide-tour';
 
 /**
  * Authenticated application shell: sidebar + header + routed content.
@@ -12,15 +13,18 @@ import { useAuthStore } from '../features/auth/model/auth-store';
  */
 export const AppLayout: React.FC = () => {
   const { t } = useTranslation();
-  const { rehydrate } = useAuthStore();
+  const { rehydrate, refreshUser } = useAuthStore();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  // Sync the auth store (user/platform) from localStorage on shell mount.
+  // Sync the auth store from localStorage, then refresh the user context
+  // (platformType / ownerType / ownerId / deployMode) via user/get on app load.
   useEffect(() => {
     rehydrate();
-  }, [rehydrate]);
+    void refreshUser();
+  }, [rehydrate, refreshUser]);
 
   const getTitle = () => {
+    if (pathname.startsWith('/node/')) return t('nodeView.title');
     switch (pathname) {
       case '/dashboard':
         return t('dashboard.title');
@@ -54,6 +58,30 @@ export const AppLayout: React.FC = () => {
         return t('p2p.myNodeTitle');
       case '/account':
         return t('account.title');
+      case '/all-data-sources':
+        return t('sidebar.allDataSources');
+      case '/all-data-tables':
+        return t('sidebar.allDataTables');
+      case '/inst-register':
+        return t('sidebar.instRegister');
+      case '/periodic-tasks/detail':
+        return t('sidebar.periodicTaskDetail');
+      case '/guide':
+        return t('sidebar.guide');
+      case '/workbench':
+        return t('sidebar.workbench');
+      case '/privacy-scenes':
+        return t('sidebar.privacyScenes');
+      case '/graphs':
+        return t('sidebar.graphs');
+      case '/job-records':
+        return t('sidebar.jobRecords');
+      case '/cloud-logs':
+        return t('sidebar.cloudLogs');
+      case '/feature-datasource':
+        return t('sidebar.featureDatasource');
+      case '/component-versions':
+        return t('sidebar.componentVersions');
       default:
         return t('app.title');
     }
@@ -69,6 +97,7 @@ export const AppLayout: React.FC = () => {
             <Outlet />
           </RouteGuard>
         </main>
+        <GuideTourHost />
       </div>
     </div>
   );

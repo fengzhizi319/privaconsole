@@ -7,36 +7,23 @@
  * 本页面以卡片式布局展示 SecretPad 支持的主要隐私计算场景，每个场景包含：
  * - 场景名称与简要说明
  * - 涉及的核心技术标签
- * - 快速入口按钮（跳转到 DAG 或相关页面）
+ * - 一键创建：打开创建项目向导，预选对应 DAG 模板与默认节点 alice/bob
+ *   （对应旧前端 privacy-scenes 的 quick create / buildScenarioQuickConfigs）
  */
-import React from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import React, { useState } from 'react';
 import { Card, Button, Badge } from '@secretpad/design-system';
 import { useTranslation } from '../../shared/lib/i18n';
-
-interface PrivacyScene {
-  key: string;
-  tags: string[];
-  route: string;
-}
-
-const scenes: PrivacyScene[] = [
-  { key: 'psi', tags: ['PSI', 'Privacy Set Intersection'], route: '/dag' },
-  { key: 'mpcRisk', tags: ['MPC', 'LR', 'WOE'], route: '/dag' },
-  { key: 'tee', tags: ['TEE', 'Trusted Execution'], route: '/dag' },
-  { key: 'classification', tags: ['Data Classification', 'L1-L5'], route: '/data-tables' },
-  { key: 'sanitization', tags: ['Masking', 'Data Sanitization'], route: '/dag' },
-  { key: 'kAnonymity', tags: ['K-Anonymity', 'Anonymization'], route: '/dag' },
-  { key: 'lDiversity', tags: ['L-Diversity', 'Anonymization'], route: '/dag' },
-  { key: 'localDp', tags: ['Local DP', 'Differential Privacy'], route: '/dag' },
-  { key: 'dpQuery', tags: ['DP Query', 'Differential Privacy'], route: '/dag' },
-  { key: 'queryObfuscation', tags: ['Query Obfuscation', 'Privacy'], route: '/dag' },
-  { key: 'federatedLearning', tags: ['FL', 'Federated Learning'], route: '/dag' },
-];
+import { usePlatform } from '../../shared/lib/platform';
+import { CreateProjectWizard } from '../../features/create-project';
+import type { CreateProjectPreset } from '../../features/create-project';
+import { projectPermissions } from '../projects/project-list.logic';
+import { scenes, scenePreset } from './scenes';
 
 export const PrivacyScenesPage: React.FC = () => {
   const { t } = useTranslation();
-  const navigate = useNavigate();
+  const platform = usePlatform();
+  const { canCreate } = projectPermissions(platform);
+  const [preset, setPreset] = useState<CreateProjectPreset | null>(null);
 
   return (
     <div className="space-y-6">
@@ -46,7 +33,9 @@ export const PrivacyScenesPage: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {scenes.map((scene) => (
+        {scenes.map((scene) => {
+          const scenePresetValue = scenePreset(scene, t(`privacyScenes.scene.${scene.key}.title`), platform);
+          return (
           <Card key={scene.key} className="flex flex-col justify-between h-full">
             <div>
               <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">
@@ -66,13 +55,18 @@ export const PrivacyScenesPage: React.FC = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => navigate({ to: scene.route })}
+              disabled={!canCreate || !scenePresetValue}
+              title={!scenePresetValue ? t('privacyScenes.modeUnsupported') : undefined}
+              onClick={() => scenePresetValue && setPreset(scenePresetValue)}
             >
-              {t('privacyScenes.tryIt')}
+              {t('privacyScenes.oneClickCreate')}
             </Button>
           </Card>
-        ))}
+          );
+        })}
       </div>
+
+      <CreateProjectWizard isOpen={!!preset} onClose={() => setPreset(null)} preset={preset ?? undefined} />
     </div>
   );
 };

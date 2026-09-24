@@ -1,62 +1,22 @@
 import React from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { useTranslation } from '../shared/lib/i18n';
-import { usePlatform } from '../shared/lib/platform';
+import { usePlatformContext } from '../shared/lib/platform';
+import { getMenu, homeHref } from '../shared/lib/access';
 
 export const AppSidebar: React.FC = () => {
   const { t } = useTranslation();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { isP2p } = usePlatform();
+  const ctx = usePlatformContext();
 
-  const menuItems = isP2p
-    ? [
-        { section: t('sidebar.overview') },
-        { path: '/dashboard', label: t('sidebar.dashboard'), icon: '📊' },
-        { path: '/workbench', label: t('sidebar.workbench'), icon: '🧭' },
-        { path: '/guide', label: t('sidebar.guide'), icon: '🚀' },
-        { section: t('sidebar.p2p') },
-        { path: '/p2p/projects', label: t('sidebar.p2pProjects'), icon: '📁' },
-        { path: '/p2p/my-node', label: t('sidebar.p2pMyNode'), icon: '🖥️' },
-        { section: t('sidebar.resources') },
-        { path: '/nodes', label: t('sidebar.nodes'), icon: '🖥️' },
-        { path: '/data-tables', label: t('sidebar.dataTables'), icon: '🗄️' },
-        { path: '/data-sources', label: t('sidebar.dataSources'), icon: '🔌' },
-        { path: '/feature-datasource', label: t('sidebar.featureDatasource'), icon: '🧬' },
-        { section: t('sidebar.governance') },
-        { path: '/models', label: t('sidebar.models'), icon: '🤖' },
-        { path: '/job-records', label: t('sidebar.jobRecords'), icon: '📋' },
-        { path: '/messages', label: t('sidebar.messages'), icon: '🔔' },
-        { path: '/cloud-logs', label: t('sidebar.cloudLogs'), icon: '☁️' },
-        { path: '/privacy-scenes', label: t('sidebar.privacyScenes'), icon: '🛡️' },
-        { path: '/account', label: t('sidebar.account'), icon: '👤' },
-      ]
-    : [
-        { section: t('sidebar.overview') },
-        { path: '/dashboard', label: t('sidebar.dashboard'), icon: '📊' },
-        { path: '/workbench', label: t('sidebar.workbench'), icon: '🧭' },
-        { path: '/guide', label: t('sidebar.guide'), icon: '🚀' },
-        { section: t('sidebar.collaboration') },
-        { path: '/projects', label: t('sidebar.projects'), icon: '📁' },
-        { path: '/dag', label: t('sidebar.dag'), icon: '⚡' },
-        { path: '/graphs', label: t('sidebar.graphs'), icon: '🕸️' },
-        { section: t('sidebar.resources') },
-        { path: '/nodes', label: t('sidebar.nodes'), icon: '🖥️' },
-        { path: '/data-tables', label: t('sidebar.dataTables'), icon: '🗄️' },
-        { path: '/data-sources', label: t('sidebar.dataSources'), icon: '🔌' },
-        { path: '/feature-datasource', label: t('sidebar.featureDatasource'), icon: '🧬' },
-        { path: '/node-routes', label: t('sidebar.nodeRoutes'), icon: '🔗' },
-        { path: '/institutions', label: t('sidebar.institutions'), icon: '🏢' },
-        { section: t('sidebar.governance') },
-        { path: '/models', label: t('sidebar.models'), icon: '🤖' },
-        { path: '/results', label: t('sidebar.results'), icon: '📦' },
-        { path: '/periodic-tasks', label: t('sidebar.periodicTasks'), icon: '⏰' },
-        { path: '/job-records', label: t('sidebar.jobRecords'), icon: '📋' },
-        { path: '/messages', label: t('sidebar.messages'), icon: '🔔' },
-        { path: '/cloud-logs', label: t('sidebar.cloudLogs'), icon: '☁️' },
-        { path: '/component-versions', label: t('sidebar.componentVersions'), icon: '🏷️' },
-        { path: '/privacy-scenes', label: t('sidebar.privacyScenes'), icon: '🛡️' },
-        { path: '/account', label: t('sidebar.account'), icon: '👤' },
-      ];
+  // Menus differ per platformType / ownerType (CENTER admin, EDGE account on
+  // CENTER, EDGE node view, AUTONOMY/P2P workbench) — see shared/lib/access.ts.
+  const menuItems = getMenu(ctx).map((item) => ({
+    ...item,
+    section: item.section ? t(item.section) : undefined,
+    label: item.labelKey ? t(item.labelKey) : '',
+    href: item.path ? homeHref({ to: item.path, params: item.params }) : '',
+  }));
 
   return (
     <aside className="w-56 bg-gray-900 text-gray-300 flex flex-col flex-shrink-0 border-r border-gray-800 select-none">
@@ -82,11 +42,12 @@ export const AppSidebar: React.FC = () => {
             );
           }
 
-          const isActive = pathname === item.path || (item.path !== '/dashboard' && pathname.startsWith(item.path!));
+          const isActive =
+            pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href + '/'));
           return (
             <Link
-              key={item.path}
-              to={item.path}
+              key={item.href}
+              {...({ to: item.path, params: item.params, search: item.search } as React.ComponentProps<typeof Link>)}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
                 isActive
                   ? 'bg-blue-600 text-white shadow-sm font-semibold'

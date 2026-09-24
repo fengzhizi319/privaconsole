@@ -12,13 +12,15 @@
  * - 文案通过 labels 注入，保持可复用性。
  */
 import React, { useState } from 'react';
+import { NODE_STATUS } from './status';
 
 /* -------------------------------------------------------------------------- */
 /* 类型定义                                                                    */
 /* -------------------------------------------------------------------------- */
 
 /** 作业执行状态。 */
-export type JobStatus = 'RUNNING' | 'SUCCEED' | 'FAILED' | 'STOPPED' | 'PENDING';
+/** 记录状态：后端 job 状态（dag-next/status）+ 'PENDING'（未开始）。 */
+export type JobStatus = typeof NODE_STATUS.RUNNING | typeof NODE_STATUS.SUCCEED | typeof NODE_STATUS.FAILED | typeof NODE_STATUS.STOPPED | 'PENDING';
 
 /** 单条执行记录。 */
 export interface ExecutionRecord {
@@ -123,13 +125,13 @@ function getDuration(start: string, end?: string): string {
 /** 获取状态图标和颜色。 */
 function getStatusVisual(status: JobStatus): { icon: string; color: string; bgColor: string } {
   switch (status) {
-    case 'SUCCEED':
+    case NODE_STATUS.SUCCEED:
       return { icon: '✓', color: 'text-green-400', bgColor: 'bg-green-500' };
-    case 'FAILED':
+    case NODE_STATUS.FAILED:
       return { icon: '✕', color: 'text-red-400', bgColor: 'bg-red-500' };
-    case 'STOPPED':
+    case NODE_STATUS.STOPPED:
       return { icon: '⏹', color: 'text-orange-400', bgColor: 'bg-orange-500' };
-    case 'RUNNING':
+    case NODE_STATUS.RUNNING:
       return { icon: '▶', color: 'text-cyan-400', bgColor: 'bg-cyan-500' };
     default:
       return { icon: '○', color: 'text-gray-400', bgColor: 'bg-gray-500' };
@@ -144,7 +146,7 @@ function getStatusVisual(status: JobStatus): { icon: string; color: string; bgCo
 const StatusIcon: React.FC<{ status: JobStatus; progress?: number }> = ({ status, progress }) => {
   const visual = getStatusVisual(status);
 
-  if (status === 'RUNNING' && progress !== undefined) {
+  if (status === NODE_STATUS.RUNNING && progress !== undefined) {
     // 运行中显示进度环
     const size = 16;
     const strokeWidth = 2;
@@ -239,7 +241,7 @@ const RecordItem: React.FC<{
         </div>
 
         {/* 进度条（运行中） */}
-        {record.status === 'RUNNING' && (
+        {record.status === NODE_STATUS.RUNNING && (
           <div className="mt-1.5 flex items-center gap-2">
             <div className="flex-1 h-1 bg-gray-700 rounded-full overflow-hidden">
               <div
@@ -252,14 +254,14 @@ const RecordItem: React.FC<{
         )}
 
         {/* 错误信息 */}
-        {record.status === 'FAILED' && record.errMsg && (
+        {record.status === NODE_STATUS.FAILED && record.errMsg && (
           <div className="mt-1 text-[9px] text-red-400 bg-red-950/30 px-2 py-1 rounded truncate">
             {labels.error ?? '错误'}: {record.errMsg}
           </div>
         )}
 
         {/* 停止按钮（运行中） */}
-        {record.status === 'RUNNING' && onStop && (
+        {record.status === NODE_STATUS.RUNNING && onStop && (
           <button
             onClick={handleStop}
             disabled={isStopping}

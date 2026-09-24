@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
+import type { User } from '@secretpad/api-client';
 import { useAuthStore } from '../../features/auth/model/auth-store';
 import { Button, Card } from '@secretpad/design-system';
 import { useTranslation } from '../../shared/lib/i18n';
 
-export const LoginPage: React.FC<{ onLoginSuccess: () => void }> = ({ onLoginSuccess }) => {
+// 仅开发环境预填默认账号，生产构建不暴露默认凭证。
+const DEV_PREFILL = Boolean(import.meta.env?.DEV) && import.meta.env?.MODE !== 'test';
+
+export const LoginPage: React.FC<{ onLoginSuccess: (user?: User) => void }> = ({ onLoginSuccess }) => {
   const { t } = useTranslation();
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('12345678');
+  const [username, setUsername] = useState(DEV_PREFILL ? 'admin' : '');
+  const [password, setPassword] = useState(DEV_PREFILL ? '12345678' : '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { login } = useAuthStore();
@@ -16,8 +20,8 @@ export const LoginPage: React.FC<{ onLoginSuccess: () => void }> = ({ onLoginSuc
     setLoading(true);
     setError(null);
     try {
-      await login(username, password);
-      onLoginSuccess();
+      const user = await login(username, password);
+      onLoginSuccess(user);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('login.error'));
     } finally {
@@ -75,7 +79,7 @@ export const LoginPage: React.FC<{ onLoginSuccess: () => void }> = ({ onLoginSuc
         </form>
 
         <div className="mt-6 pt-4 border-t border-gray-800/80 text-center text-xs text-gray-500">
-          SecretFlow Ecosystem • {t('login.defaultHint')}
+          SecretFlow Ecosystem{DEV_PREFILL ? ` • ${t('login.defaultHint')}` : ''}
         </div>
       </Card>
     </div>

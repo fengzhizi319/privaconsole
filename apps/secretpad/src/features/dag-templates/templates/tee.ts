@@ -23,7 +23,8 @@
  * - 需要单独的 WOE 转换节点分别处理训练集与测试集。
  */
 import type { TeeTemplateConfig, TemplateBuildResult, TemplateContribution } from '../types';
-import { connect, createNode, createReadDataNode, sAttr, ssAttr } from '../builder';
+import { labelOf } from '../types';
+import { connect, createNode, createReadDataNode, createTeePsiNode, sAttr, ssAttr } from '../builder';
 
 /**
  * 构造 TEE 二分类建模 DAG。
@@ -43,7 +44,12 @@ export const teeTemplate: TemplateContribution<TeeTemplateConfig> = {
   },
   build({ graphId, configs }): TemplateBuildResult {
     const featureSelects = configs.featureSelects?.ss ?? [];
-    const labelName = configs.labelSelects?.s ?? '';
+    const labelName = labelOf(configs.labelSelects);
+    // 旧版 quick-config-risk-tee：训练 / 预测 id 列、保存开关、评估的标签 / 得分列名。
+    const trainIds = configs.trainIdSelect ?? [];
+    const predictIds = configs.predictIdSelect ?? [];
+    const evalLabel = configs.label || labelName;
+    const evalScore = configs.score || 'pred';
     const hasFeature = featureSelects.length > 0;
     const hasLabel = Boolean(labelName);
 
@@ -60,22 +66,11 @@ export const teeTemplate: TemplateContribution<TeeTemplateConfig> = {
     });
 
     // 3: TEE PSI 求交（preprocessing/psi）
-    const psi = createNode(graphId, 3, 'preprocessing/psi', '隐私求交', {
+    const psi = createTeePsiNode(graphId, 3, [`${graphId}-node-1-output-0`, `${graphId}-node-2-output-0`], {
+      receiverKey: configs.receiverKey || '',
+      senderKey: configs.senderKey || '',
       x: -270,
       y: -90,
-      inputs: [`${graphId}-node-1-output-0`, `${graphId}-node-2-output-0`],
-      outputs: [`${graphId}-node-3-output-0`],
-      nodeDef: {
-        ...(configs.receiverKey && configs.senderKey
-          ? {
-              attrPaths: ['input/input1/key', 'input/input2/key'],
-              attrs: [sAttr(configs.receiverKey), sAttr(configs.senderKey)],
-            }
-          : {}),
-        domain: 'preprocessing',
-        name: 'psi',
-        version: '0.0.1',
-      },
     });
 
     // 4: 全表统计
@@ -172,7 +167,7 @@ export const teeTemplate: TemplateContribution<TeeTemplateConfig> = {
         ...(hasLabel
           ? {
               attrPaths: ['input/train_dataset/ids', 'input/train_dataset/label'],
-              attrs: [{ ss: [], is_na: true }, sAttr(labelName)],
+              attrs: [trainIds.length ? ssAttr(trainIds) : { ss: [], is_na: true }, sAttr(labelName)],
             }
           : {}),
         domain: 'ml.train',
@@ -206,10 +201,10 @@ export const teeTemplate: TemplateContribution<TeeTemplateConfig> = {
                 'save_label',
               ],
               attrs: [
-                { ss: [], is_na: true },
+                predictIds.length ? ssAttr(predictIds) : { ss: [], is_na: true },
                 sAttr(labelName),
-                { b: true, is_na: false },
-                { b: true, is_na: false },
+                { b: configs.saveId ?? true, is_na: false },
+                { b: configs.saveLabel ?? true, is_na: false },
               ],
             }
           : {}),
@@ -226,10 +221,10 @@ export const teeTemplate: TemplateContribution<TeeTemplateConfig> = {
       inputs: [`${graphId}-node-11-output-0`],
       outputs: [`${graphId}-node-13-output-0`],
       nodeDef: {
-        ...(hasLabel
+        ...(evalLabel && evalScore
           ? {
               attrPaths: ['input/predictions/label', 'input/predictions/score'],
-              attrs: [sAttr(labelName), sAttr(labelName)],
+              attrs: [sAttr(evalLabel), sAttr(evalScore)],
             }
           : {}),
         domain: 'ml.eval',
@@ -245,10 +240,10 @@ export const teeTemplate: TemplateContribution<TeeTemplateConfig> = {
       inputs: [`${graphId}-node-11-output-0`],
       outputs: [`${graphId}-node-14-output-0`],
       nodeDef: {
-        ...(hasLabel
+        ...(evalLabel && evalScore
           ? {
               attrPaths: ['input/predictions/label', 'input/predictions/score'],
-              attrs: [sAttr(labelName), sAttr(labelName)],
+              attrs: [sAttr(evalLabel), sAttr(evalScore)],
             }
           : {}),
         domain: 'ml.eval',

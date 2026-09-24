@@ -67,6 +67,14 @@ import {
   PullStatusVOSchema,
 } from './schemas';
 
+/**
+ * Raw backend JSON before field-by-field normalisation. Legacy Java / Go payloads
+ * use both camelCase and snake_case, so mappers read them loosely and coerce each
+ * field explicitly; this single alias keeps that looseness in one documented place.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see comment above
+type RawJson = any;
+
 type SecretPadResponse<T> = {
   status?: { code: number; msg?: string };
   data?: T;
@@ -91,7 +99,7 @@ function unwrapVoid(res: SecretPadResponse<unknown>): void {
 function apiError(error: unknown): string {
   if (typeof error === 'string') return error;
   if (!error) return 'Unknown error';
-  const errAny = error as any;
+  const errAny = error as RawJson;
   if (errAny.msg) return String(errAny.msg);
   if (errAny.message) return String(errAny.message);
   if (errAny.status?.msg) return String(errAny.status.msg);
@@ -147,7 +155,7 @@ function mapProjectVO(vo: ProjectVO): Project {
     projectName: vo.projectName || '',
     name: vo.projectName || '',
     description: vo.description || '',
-    computeMode: vo.computeMode || 'FL',
+    computeMode: vo.computeMode || 'MPC',
     nodes: (vo.nodes || []).map((n) => ({
       nodeId: n.nodeId || '',
       nodeName: n.nodeName,
@@ -160,17 +168,35 @@ function mapProjectVO(vo: ProjectVO): Project {
   } as Project;
 }
 
-function mapJobStatus(status: string): JobExecution['status'] {
-  switch (status) {
+/**
+ * Normalise a backend job status to the Java `GraphJobStatus` enum
+ * (STAGING | INITIALIZED | RUNNING | STOPPED | SUCCEED | FAILED) — the same
+ * constants as `@secretpad/dag-next` `JOB_STATUS` / `normalizeStatus`.
+ */
+export function mapJobStatus(status?: string | null): JobExecution['status'] {
+  switch (String(status || '').trim().toUpperCase()) {
     case 'RUNNING':
       return 'RUNNING';
     case 'SUCCEED':
-      return 'SUCCEEDED';
+    case 'SUCCEEDED':
+    case 'SUCCESS':
+      return 'SUCCEED';
     case 'FAILED':
-    case 'STOPPED':
+    case 'FAIL':
+    case 'ERROR':
       return 'FAILED';
+    case 'STOPPED':
+    case 'STOP':
+    case 'CANCELED':
+    case 'CANCELLED':
+      return 'STOPPED';
+    case 'STAGING':
+    case 'IDLE':
+    case '':
+      return 'STAGING';
     default:
-      return 'PENDING';
+      // INITIALIZED / PENDING / INITIALIZING
+      return 'INITIALIZED';
   }
 }
 
@@ -188,44 +214,57 @@ function formatDuration(start?: string, end?: string): string {
   return `${secs}s`;
 }
 
+const PAD_MODES = ['ALL-IN-ONE', 'MPC', 'TEE'];
+
+/**
+ * Map a Java `UserContextDTO` (login / user/get) into the frontend User.
+ * `platformType` is taken from the `platformType` field (never from ownerType);
+ * `deployMode` falls back to ALL-IN-ONE only when absent or not a valid PadMode.
+ */
+export function mapUserContext(raw: RawJson, fallbackName = '', token = ''): User {
+  const deployMode = typeof raw?.deployMode === 'string' ? raw.deployMode.toUpperCase() : '';
+  return {
+    ownerId: raw?.ownerId || raw?.user?.owner_id || raw?.platformNodeId || '',
+    name: raw?.name || raw?.user?.name || fallbackName,
+    role: 'ADMIN',
+    token: token || raw?.token || '',
+    platformType: raw?.platformType || 'CENTER',
+    platformNodeId: raw?.platformNodeId || undefined,
+    ownerType: raw?.ownerType || raw?.user?.owner_type || 'CENTER',
+    deployMode: PAD_MODES.includes(deployMode) ? deployMode : 'ALL-IN-ONE',
+    apiResources: Array.isArray(raw?.apiResources) ? raw.apiResources : undefined,
+  };
+}
+
 export const apiClient = {
-  async login(name: string, passwordHash: string): Promise<User> {
-    let res = await api.POST('/api/v1alpha1/user/login' as any, {
-      body: { name, password: passwordHash } as any,
-    });
-    if (res.error || (res.data as any)?.status?.code === 202011504) {
-      res = await api.POST('/api/login', {
-        body: { name, passwordHash },
-      } as any);
+  /**
+   * Login (Java contract: POST /api/login {name, passwordHash} -> UserContextDTO).
+   * `passwordHashSm3` carries the legacy SM3 digest so accounts created by the
+   * Java platform (which stored SM3 hashes) can still be verified.
+   */
+  async login(name: string, passwordHash: string, passwordHashSm3?: string): Promise<User> {
+    const body = { name, passwordHash, ...(passwordHashSm3 ? { passwordHashSm3 } : {}) };
+    let res = await api.POST('/api/login', { body } as RawJson);
+    // Fallback for deployments exposing only the v1alpha1 route.
+    if (res?.response?.status === 404) {
+      res = await api.POST('/api/v1alpha1/user/login' as RawJson, { body: { ...body, password: passwordHash } as never });
     }
     const { data, error } = res;
     if (error || !data) {
       throw new Error(
-        (error as any)?.message || (data as unknown as SecretPadResponse<unknown>)?.status?.msg || 'Login failed'
+        (error as RawJson)?.message || (data as unknown as SecretPadResponse<unknown>)?.status?.msg || 'Login failed'
       );
     }
-    const rawData = unwrap(data as unknown as SecretPadResponse<any>);
-    const token = rawData.access_token || rawData.token || '';
+    const rawData = unwrap(data as unknown as SecretPadResponse<RawJson>);
+    const token = rawData.token || rawData.access_token || '';
     if (token) {
       localStorage.setItem('secretpad-token', token);
     }
-    const user: User = {
-      ownerId: rawData.user?.owner_id || rawData.ownerId || 'kuscia-system',
-      name: rawData.user?.name || rawData.name || name,
-      role: 'ADMIN',
-      token: token,
-      platformType: rawData.user?.owner_type || rawData.platformType || rawData.ownerType || 'CENTER',
-      ownerType: rawData.user?.owner_type || rawData.ownerType || 'CENTER',
-      // deployMode 必须是合法的 PadMode（TEE/MPC/ALL-IN-ONE）。
-      // 此前误写为 'CENTER'，useHasAccess 的 modes 校验恒为 false，
-      // 导致所有 AccessGuard 拒绝放行（如 /dag 画布退化为只读，组件无法拖拽）。
-      deployMode: 'ALL-IN-ONE',
-    };
-    return user;
+    return mapUserContext(rawData, name, token);
   },
 
   async logout(): Promise<void> {
-    await api.POST('/api/v1alpha1/user/logout' as any, { body: {} as any }).catch(() =>
+    await api.POST('/api/v1alpha1/user/logout' as RawJson, { body: {} as never }).catch(() =>
       api.POST('/api/logout').catch(() => undefined)
     );
     localStorage.removeItem('secretpad-token');
@@ -233,11 +272,11 @@ export const apiClient = {
   },
 
   async getNodes(): Promise<Node[]> {
-    const { data, error } = await api.POST('/api/v1alpha1/node/list', { body: {} as any });
+    const { data, error } = await api.POST('/api/v1alpha1/node/list', { body: {} as never });
     if (error) throw new Error(apiError(error));
-    const payload = unwrap(data as unknown as SecretPadResponse<any>);
+    const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
     const rawNodes = Array.isArray(payload) ? payload : (payload?.nodes || payload?.list || []);
-    return rawNodes.map((n: any) => {
+    return rawNodes.map((n: RawJson) => {
       const status = n.nodeStatus || n.node_status || n.status || 'Ready';
       const gmt = n.gmtCreate || n.gmt_create || n.createTime || '';
       return {
@@ -296,10 +335,10 @@ export const apiClient = {
 
   async refreshNode(nodeId: string): Promise<Node> {
     const { data, error } = await api.POST('/api/v1alpha1/node/refresh', {
-      body: { nodeId, node_id: nodeId } as any,
+      body: { nodeId, node_id: nodeId } as never,
     });
     if (error) throw new Error(apiError(error));
-    const node = unwrap(data as unknown as SecretPadResponse<any>);
+    const node = unwrap(data as unknown as SecretPadResponse<RawJson>);
     const status = node.nodeStatus || node.node_status || node.status || 'Ready';
     const gmt = node.gmtCreate || node.gmt_create || node.createTime || '';
     return {
@@ -324,14 +363,14 @@ export const apiClient = {
   },
 
   async getProjects(): Promise<Project[]> {
-    const { data, error } = await api.POST('/api/v1alpha1/project/list', { body: {} as any });
+    const { data, error } = await api.POST('/api/v1alpha1/project/list', { body: {} as never });
     if (error) throw new Error(apiError(error));
-    const payload = unwrap(data as unknown as SecretPadResponse<any>);
+    const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
     const rawProjects = Array.isArray(payload) ? payload : (payload?.projects || payload?.list || []);
-    return rawProjects.map((p: any) => {
+    return rawProjects.map((p: RawJson) => {
       const rawNodes = p.nodes || p.node_ids || [];
       const nodes = Array.isArray(rawNodes)
-        ? rawNodes.map((n: any) =>
+        ? rawNodes.map((n: RawJson) =>
             typeof n === 'string'
               ? { nodeId: n, nodeName: n }
               : { ...n, nodeId: n?.nodeId || n?.node_id || n?.name || '', nodeName: n?.nodeName || n?.name || n?.nodeId || n?.node_id || '' }
@@ -365,7 +404,7 @@ export const apiClient = {
       body: {
         name: data.projectName || data.name || '',
         description: data.description || '',
-        computeMode: data.computeMode || 'FL',
+        computeMode: data.computeMode || 'MPC',
         teeNodeId: '',
       } as components['schemas']['CreateProjectRequest'],
     });
@@ -376,7 +415,7 @@ export const apiClient = {
       projectName: data.projectName || data.name || 'New Project',
       name: data.name || data.projectName || 'New Project',
       description: data.description || '',
-      computeMode: data.computeMode || 'FL',
+      computeMode: data.computeMode || 'MPC',
       nodes: data.nodes || [],
       status: 'ACTIVE',
       jobCount: 0,
@@ -387,18 +426,18 @@ export const apiClient = {
 
   async getDataSources(ownerId?: string): Promise<DataSource[]> {
     const { data, error } = await api.POST('/api/v1alpha1/datasource/list', {
-      body: { ownerId, owner_id: ownerId, page: 1, size: 1000 } as any,
+      body: { ownerId, owner_id: ownerId, page: 1, size: 1000 } as never,
     });
     if (error) throw new Error(apiError(error));
-    const payload = unwrap(data as unknown as SecretPadResponse<any>);
+    const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
     const rawList = Array.isArray(payload)
       ? payload
       : (payload?.datasources || payload?.infos || payload?.list || []);
-    return rawList.map((ds: any) => ({
+    return rawList.map((ds: RawJson) => ({
       ...ds,
       datasourceId: ds.datasourceId || ds.datasource_id || '',
       name: ds.name || ds.datasourceId || ds.datasource_id || '',
-      type: ds.type || 'LOCAL_FS',
+      type: ds.type || 'LOCAL',
       status: ds.status || 'Available',
       ownerId: ds.ownerId || ds.owner_id || ownerId || '',
       description: ds.description || '',
@@ -439,16 +478,16 @@ export const apiClient = {
 
   async getDataTables(ownerId?: string): Promise<DataTable[]> {
     const { data, error } = await api.POST('/api/v1alpha1/datatable/list', {
-      body: { pageSize: 1000, pageNumber: 1, ownerId, node_id: ownerId, nodeId: ownerId } as any,
+      body: { pageSize: 1000, pageNumber: 1, ownerId, node_id: ownerId, nodeId: ownerId } as never,
     });
     if (error) throw new Error(apiError(error));
-    const payload = unwrap(data as unknown as SecretPadResponse<any>);
+    const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
     const rawList = Array.isArray(payload)
       ? payload
       : (payload?.datatableNodeVOList || payload?.list || payload?.datatables || []);
 
-    return rawList.map((item: any) => {
-      let configs: any = {};
+    return rawList.map((item: RawJson) => {
+      let configs: RawJson = {};
       if (item.table_configs) {
         try {
           configs = typeof item.table_configs === 'string' ? JSON.parse(item.table_configs) : item.table_configs;
@@ -464,7 +503,7 @@ export const apiClient = {
       const relativeUri = vo?.relativeUri || configs?.relativeUri || tableId + '.csv';
 
       const rawCols = configs?.columns || vo?.schema || vo?.columns || [];
-      const columns: DataTableColumn[] = rawCols.map((c: any) => ({
+      const columns: DataTableColumn[] = rawCols.map((c: RawJson) => ({
         name: c.colName || c.name || '',
         type: c.colType || c.type || 'string',
         comment: c.comment || '',
@@ -477,7 +516,7 @@ export const apiClient = {
         nodeId,
         nodeName: nodeId,
         datasourceId,
-        datasourceType: vo?.datasourceType || 'LOCAL_FS',
+        datasourceType: vo?.datasourceType || 'LOCAL',
         relativeUri,
         status: vo?.status || item.status || 'Available',
         columns,
@@ -540,7 +579,7 @@ export const apiClient = {
     });
     if (error) throw new Error(apiError(error));
     const payload = unwrap(
-      data as unknown as SecretPadResponse<{ data?: any[]; pageSize?: number; pageTotal?: number }>
+      data as unknown as SecretPadResponse<{ data?: RawJson[]; pageSize?: number; pageTotal?: number }>
     );
     const raw = payload.data || [];
     return raw.map((j) => ({
@@ -680,7 +719,7 @@ export const apiClient = {
     return unwrap(data as unknown as SecretPadResponse<GraphDetailVO>);
   },
 
-  async createGraph(input: { projectId: string; name: string; nodes?: any[]; edges?: any[] }): Promise<string> {
+  async createGraph(input: { projectId: string; name: string; nodes?: RawJson[]; edges?: RawJson[] }): Promise<string> {
     const { data, error } = await api.POST('/api/v1alpha1/graph/create', {
       body: {
         projectId: input.projectId,
@@ -712,14 +751,20 @@ export const apiClient = {
   },
 
   async getComponents(): Promise<CompListVO[]> {
-    const { data, error } = await api.POST('/api/v1alpha1/component/list', { body: {} as any });
+    const { data, error } = await api.POST('/api/v1alpha1/component/list', { body: {} as never });
     if (error) throw new Error(apiError(error));
     const payload = unwrap(
       data as unknown as SecretPadResponse<
         { compListVOList?: CompListVO[]; list?: CompListVO[]; components?: CompListVO[] } | CompListVO[]
       >
     );
-    const raw = Array.isArray(payload) ? payload : (payload?.compListVOList || payload?.list || payload?.components || []);
+    // Java: Map<app, CompListVO>（secretflow / trustedflow / secretpad_tee）→ 取 Object.values。
+    const raw = Array.isArray(payload)
+      ? payload
+      : payload?.compListVOList ||
+        payload?.list ||
+        payload?.components ||
+        Object.values((payload || {}) as Record<string, unknown>).filter((v) => !!v && typeof v === 'object' && Array.isArray((v as { comps?: unknown }).comps));
     return raw as CompListVO[];
   },
 
@@ -733,7 +778,7 @@ export const apiClient = {
   },
 
   async listComponentI18n(): Promise<Record<string, string>> {
-    const { data, error } = await api.POST('/api/v1alpha1/component/i18n', { body: {} as any });
+    const { data, error } = await api.POST('/api/v1alpha1/component/i18n', { body: {} as never });
     if (error) throw new Error(apiError(error));
     const payload = unwrap(data as unknown as SecretPadResponse<Record<string, string>>);
     return payload || {};
@@ -917,14 +962,6 @@ export const apiClient = {
     return Array.isArray(list) ? list : list.list || [];
   },
 
-  async getProjectOutTables(projectId: string, graphId: string): Promise<components['schemas']['ProjectOutputVO']> {
-    const { data, error } = await api.POST('/api/v1alpha1/project/getOutTable', {
-      body: { projectId, graphId } as components['schemas']['GetProjectGraphRequest'],
-    });
-    if (error) throw new Error(apiError(error));
-    return unwrap(data as unknown as SecretPadResponse<components['schemas']['ProjectOutputVO']>);
-  },
-
   async updateProjectTableConfig(input: {
     projectId: string;
     nodeId: string;
@@ -1037,7 +1074,7 @@ export const apiClient = {
     });
     if (error) throw new Error(apiError(error));
     const payload = unwrap(data as unknown as SecretPadResponse<unknown>);
-    return typeof payload === 'string' ? payload : (payload as { modelStats?: string })?.modelStats || '';
+    return typeof payload === 'string' ? payload : (payload as { modelStats?: string; status?: string })?.modelStats || (payload as { status?: string })?.status || '';
   },
 
   async getModelDetail(modelId: string, projectId: string): Promise<ModelPackDetailVO> {
@@ -1090,6 +1127,14 @@ export const apiClient = {
       body: JSON.stringify(input),
     });
     if (!response.ok) throw new Error(`Download failed with HTTP ${response.status}`);
+    // Errors come back as a JSON SecretPadResponse with HTTP 200 (Java and Go).
+    if ((response.headers.get('Content-Type') || '').includes('application/json')) {
+      const json = (await response.json()) as SecretPadResponse<unknown>;
+      if (json?.status && json.status.code !== 0) {
+        throw new Error(json.status.msg || `API error ${json.status.code}`);
+      }
+      return new Blob([JSON.stringify(json)], { type: 'application/json' });
+    }
     return response.blob();
   },
 
@@ -1117,10 +1162,10 @@ export const apiClient = {
 
   async getNode(nodeId: string): Promise<Node> {
     const { data, error } = await api.POST('/api/v1alpha1/node/get', {
-      body: { nodeId, node_id: nodeId } as any,
+      body: { nodeId, node_id: nodeId } as never,
     });
     if (error) throw new Error(apiError(error));
-    const node = unwrap(data as unknown as SecretPadResponse<any>);
+    const node = unwrap(data as unknown as SecretPadResponse<RawJson>);
     const status = node.nodeStatus || node.node_status || node.status || 'Ready';
     return {
       ...node,
@@ -1184,10 +1229,10 @@ export const apiClient = {
       body: input as components['schemas']['PageNodeRouteRequest'],
     });
     if (error) throw new Error(apiError(error));
-    const payload = unwrap(data as unknown as SecretPadResponse<any>);
+    const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
     const rawList = Array.isArray(payload) ? payload : (payload?.data || payload?.list || []);
     const totalCount = payload?.total || payload?.totalCount || rawList.length;
-    const formatted = rawList.map((r: any) => ({
+    const formatted = rawList.map((r: RawJson) => ({
       ...r,
       routeId: r.routeId || r.route_id || r.routerId || r.router_id || '',
       srcNodeId: r.srcNodeId || r.src_node_id || '',
@@ -1202,11 +1247,11 @@ export const apiClient = {
   },
 
   async listRouteNodes(): Promise<Node[]> {
-    const { data, error } = await api.POST('/api/v1alpha1/nodeRoute/listNode', { body: {} as any });
+    const { data, error } = await api.POST('/api/v1alpha1/nodeRoute/listNode', { body: {} as never });
     if (error) throw new Error(apiError(error));
-    const payload = unwrap(data as unknown as SecretPadResponse<any>);
+    const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
     const rawNodes = Array.isArray(payload) ? payload : (payload?.nodes || payload?.list || []);
-    return rawNodes.map((n: any) => ({
+    return rawNodes.map((n: RawJson) => ({
       ...n,
       nodeId: n.nodeId || n.node_id || '',
       nodeName: n.nodeName || n.name || '',
@@ -1218,10 +1263,10 @@ export const apiClient = {
 
   async getNodeRoute(routerId: string): Promise<NodeRouterVO> {
     const { data, error } = await api.POST('/api/v1alpha1/nodeRoute/get', {
-      body: { routerId, router_id: routerId } as any,
+      body: { routerId, router_id: routerId } as never,
     });
     if (error) throw new Error(apiError(error));
-    const r = unwrap(data as unknown as SecretPadResponse<any>);
+    const r = unwrap(data as unknown as SecretPadResponse<RawJson>);
     return {
       ...r,
       routeId: r.routeId || r.route_id || r.routerId || r.router_id || routerId,
@@ -1253,10 +1298,10 @@ export const apiClient = {
 
   async refreshNodeRoute(routerId: string): Promise<NodeRouterVO> {
     const { data, error } = await api.POST('/api/v1alpha1/nodeRoute/refresh', {
-      body: { routerId, router_id: routerId } as any,
+      body: { routerId, router_id: routerId } as never,
     });
     if (error) throw new Error(apiError(error));
-    const r = unwrap(data as unknown as SecretPadResponse<any>);
+    const r = unwrap(data as unknown as SecretPadResponse<RawJson>);
     return {
       ...r,
       routeId: r.routeId || r.route_id || r.routerId || r.router_id || routerId,
@@ -1274,10 +1319,10 @@ export const apiClient = {
 
   async getInst(instId: string): Promise<InstVO> {
     const { data, error } = await api.POST('/api/v1alpha1/inst/get', {
-      body: { instId, inst_id: instId, ownerId: instId } as any,
+      body: { instId, inst_id: instId, ownerId: instId } as never,
     });
     if (error) throw new Error(apiError(error));
-    const payload = unwrap(data as unknown as SecretPadResponse<any>);
+    const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
     return {
       instId: payload.instId || payload.inst_id || instId || 'alice',
       instName: payload.instName || payload.name || payload.inst_id || instId || 'alice',
@@ -1286,11 +1331,11 @@ export const apiClient = {
   },
 
   async listInstNodes(): Promise<Node[]> {
-    const { data, error } = await api.POST('/api/v1alpha1/inst/node/list', { body: {} as any });
+    const { data, error } = await api.POST('/api/v1alpha1/inst/node/list', { body: {} as never });
     if (error) throw new Error(apiError(error));
-    const payload = unwrap(data as unknown as SecretPadResponse<any>);
+    const payload = unwrap(data as unknown as SecretPadResponse<RawJson>);
     const rawNodes = Array.isArray(payload) ? payload : (payload?.nodes || payload?.list || []);
-    return rawNodes.map((n: any) => ({
+    return rawNodes.map((n: RawJson) => ({
       ...n,
       nodeId: n.nodeId || n.node_id || '',
       nodeName: n.nodeName || n.name || '',
@@ -1334,13 +1379,15 @@ export const apiClient = {
 
   async registerInstNode(jsonData: string, files: { certFile?: File; keyFile?: File; token?: File }): Promise<void> {
     const formData = new FormData();
+    // Java @RequestParam("json_data"): multipart form field (Go also accepts the query string).
+    formData.append('json_data', jsonData);
     if (files.certFile) formData.append('certFile', files.certFile);
     if (files.keyFile) formData.append('keyFile', files.keyFile);
     if (files.token) formData.append('token', files.token);
     const headers: Record<string, string> = {};
     const token = getStoredToken();
     if (token) headers['User-Token'] = token;
-    const response = await fetch(`/api/v1alpha1/inst/node/register?json_data=${encodeURIComponent(jsonData)}`, {
+    const response = await fetch('/api/v1alpha1/inst/node/register', {
       method: 'POST',
       headers,
       body: formData,
@@ -1402,17 +1449,18 @@ export const apiClient = {
   },
 
   async listP2pProjects(): Promise<ProjectVO[]> {
-    const { data, error } = await api.POST('/api/v1alpha1/p2p/project/list', { body: {} as any });
+    const { data, error } = await api.POST('/api/v1alpha1/p2p/project/list', { body: {} as never });
     if (error) throw new Error(apiError(error));
     return validated(z.array(ProjectVOSchema), unwrap(data as unknown as SecretPadResponse<unknown>), 'p2p/project/list');
   },
 
-  async archiveP2pProject(projectId: string): Promise<ProjectVO[]> {
+  /** Java returns `data: null` (typed List<ProjectVO> but never set). */
+  async archiveP2pProject(projectId: string): Promise<void> {
     const { data, error } = await api.POST('/api/v1alpha1/p2p/project/archive', {
       body: { projectId } as components['schemas']['ArchiveProjectRequest'],
     });
     if (error) throw new Error(apiError(error));
-    return validated(z.array(ProjectVOSchema), unwrap(data as unknown as SecretPadResponse<unknown>), 'p2p/project/archive');
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
   async getP2pParticipants(voteId: string): Promise<ProjectParticipantsDetailVO> {
@@ -1426,7 +1474,7 @@ export const apiClient = {
   // ============================ user ============================
 
   async getUser(): Promise<UserContextDTO> {
-    const { data, error } = await api.POST('/api/v1alpha1/user/get', { body: {} as any });
+    const { data, error } = await api.POST('/api/v1alpha1/user/get', { body: {} as never });
     if (error) throw new Error(apiError(error));
     return unwrapValidated(UserContextDTOSchema, data, 'user/get');
   },
@@ -1444,17 +1492,17 @@ export const apiClient = {
     return Boolean(unwrap(data as unknown as SecretPadResponse<boolean>));
   },
 
+  /**
+   * Node-user password reset. `user/node/resetPassword` is inner-port only
+   * (Java inner-port.path), so this delegates to user/remote/resetPassword.
+   */
   async resetNodeUserPassword(input: {
     nodeId: string;
     name: string;
     passwordHash: string;
     newPasswordHash: string;
   }): Promise<string> {
-    const { data, error } = await api.POST('/api/v1alpha1/user/node/resetPassword', {
-      body: input as components['schemas']['ResetNodeUserPwdRequest'],
-    });
-    if (error) throw new Error(apiError(error));
-    return unwrap(data as unknown as SecretPadResponse<string>);
+    return this.resetRemoteUserPassword(input);
   },
 
   async resetRemoteUserPassword(input: {
@@ -1548,10 +1596,14 @@ export const apiClient = {
       body: input as components['schemas']['ScheduleListProjectJobRequest'],
     });
     if (error) throw new Error(apiError(error));
+    // Java PageResponse carries `data`; Go also mirrors it as `list`.
     const payload = unwrap(
-      data as unknown as SecretPadResponse<{ list?: components['schemas']['ProjectJobSummaryVO'][] }>
+      data as unknown as SecretPadResponse<{
+        data?: components['schemas']['ProjectJobSummaryVO'][];
+        list?: components['schemas']['ProjectJobSummaryVO'][];
+      }>
     );
-    return payload.list || [];
+    return payload.data || payload.list || [];
   },
 
   async getScheduledTaskInfo(input: { scheduleId: string; scheduleTaskId: string }): Promise<ProjectJobVO> {
@@ -1677,16 +1729,6 @@ export const apiClient = {
     });
     if (error) throw new Error(apiError(error));
     return unwrap(data as unknown as SecretPadResponse<components['schemas']['CloudGraphNodeTaskLogsVO']>);
-  },
-
-  // ============================ vote sync ============================
-
-  async createVoteSync(dbSyncRequests: components['schemas']['DbSyncRequest'][]): Promise<unknown> {
-    const { data, error } = await api.POST('/api/v1alpha1/vote_sync/create', {
-      body: { dbSyncRequests } as components['schemas']['VoteSyncRequest'],
-    });
-    if (error) throw new Error(apiError(error));
-    return unwrap(data as unknown as SecretPadResponse<unknown>);
   },
 
   // ============================ version ============================

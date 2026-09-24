@@ -25,6 +25,7 @@ import type {
   TemplateContribution,
   TwoTableTemplateConfig,
 } from '../types';
+import { labelOf } from '../types';
 import {
   connect,
   createNode,
@@ -52,7 +53,8 @@ export const riskTemplate: TemplateContribution<RiskTemplateConfig> = {
     category: 'ml',
   },
   build({ graphId, configs }): TemplateBuildResult {
-    const { receiverNodeId, senderNodeId, receiverKey, senderKey } = configs as TwoTableTemplateConfig;
+    const { receiverNodeId, senderNodeId, receiverKey, senderKey, receiverParties } = configs as TwoTableTemplateConfig;
+    const predictReceiver = configs.predictReceiver || receiverNodeId;
 
     // 1 ~ 2: 两表读取
     const receiverRead = createReadDataNode(graphId, 1, configs.receiverTableId, {
@@ -77,12 +79,13 @@ export const riskTemplate: TemplateContribution<RiskTemplateConfig> = {
       senderKey: senderKey || '',
       receiverNodeId: receiverNodeId || '',
       senderNodeId: senderNodeId || '',
+      receiverParties,
       x: -240,
       y: -160,
     });
 
     const featureSelects = configs.featureSelects?.ss ?? [];
-    const labelName = configs.labelSelects?.s ?? '';
+    const labelName = labelOf(configs.labelSelects);
     const predName = configs.pred?.s ?? 'pred';
     const hasFeature = featureSelects.length > 0;
     const hasLabel = Boolean(labelName);
@@ -220,10 +223,10 @@ export const riskTemplate: TemplateContribution<RiskTemplateConfig> = {
       inputs: [`${graphId}-node-11-output-0`, `${graphId}-node-8-output-0`],
       outputs: [`${graphId}-node-13-output-0`],
       nodeDef: {
-        ...(receiverNodeId && predName
+        ...(predictReceiver && predName
           ? {
               attrPaths: ['receiver', 'pred_name', 'save_label'],
-              attrs: [sAttr(receiverNodeId), sAttr(predName), { b: true, is_na: false }],
+              attrs: [sAttr(predictReceiver), sAttr(predName), { b: true, is_na: false }],
             }
           : {}),
         domain: 'ml.predict',

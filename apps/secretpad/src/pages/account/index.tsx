@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { Card, Button, toast } from '@secretpad/design-system';
-import { apiClient } from '@secretpad/api-client';
-import { sha256 } from '@secretpad/utils';
+import { updateUserPassword } from '@secretpad/api-client';
+import { sha256, sm3, validatePasswordChange } from '@secretpad/utils';
 import { useTranslation } from '../../shared/lib/i18n';
 import { useAuthStore } from '../../features/auth/model/auth-store';
 
 export const AccountPage: React.FC = () => {
   const { t } = useTranslation();
-  const { user, platform } = useAuthStore();
+  const { user, platform, logout } = useAuthStore();
+  const navigate = useNavigate();
 
   const [error, setError] = useState<string | null>(null);
   const [oldPassword, setOldPassword] = useState('');
@@ -17,21 +19,33 @@ export const AccountPage: React.FC = () => {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const oldPasswordHash = await sha256(oldPassword);
-      const newPasswordHash = await sha256(newPassword);
-      const confirmPasswordHash = await sha256(confirmPassword);
-      return apiClient.updatePassword({
+      const [oldPasswordHash, newPasswordHash, confirmPasswordHash] = await Promise.all([
+        sha256(oldPassword),
+        sha256(newPassword),
+        sha256(confirmPassword),
+      ]);
+      return updateUserPassword({
         name: user?.name,
         oldPasswordHash,
         newPasswordHash,
         confirmPasswordHash,
+        // SM3 twins let the backend verify accounts created by the legacy Java platform.
+        oldPasswordHashSm3: sm3(oldPassword),
+        newPasswordHashSm3: sm3(newPassword),
+        confirmPasswordHashSm3: sm3(confirmPassword),
       });
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
       toast.success(t('account.success'));
+      // Legacy behaviour: re-login with the new password.
+      try {
+        await logout();
+      } finally {
+        navigate({ to: '/login' });
+      }
     },
     onError: (e) => setError(e instanceof Error ? e.message : String(e)),
   });
@@ -39,8 +53,9 @@ export const AccountPage: React.FC = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (newPassword !== confirmPassword) {
-      setError(t('account.mismatch'));
+    const issue = validatePasswordChange({ oldPassword, newPassword, confirmPassword });
+    if (issue) {
+      setError(issue === 'mismatch' ? t('account.mismatch') : t(`account.policy.${issue}`));
       return;
     }
     mutation.mutate();
@@ -83,37 +98,43 @@ export const AccountPage: React.FC = () => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs max-w-md">
+          <div className="text-[11px] text-gray-500">{t('account.policy.hint')}</div>
           <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('account.oldPassword')}</label>
+            <label htmlFor="acc-old" className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('account.oldPassword')}</label>
             <input
               type="password"
               value={oldPassword}
+              id="acc-old"
               onChange={(e) => setOldPassword(e.target.value)}
               className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
               required
             />
           </div>
           <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('account.newPassword')}</label>
+            <label htmlFor="acc-new" className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('account.newPassword')}</label>
             <input
               type="password"
               value={newPassword}
+              id="acc-new"
               onChange={(e) => setNewPassword(e.target.value)}
+              minLength={8}
+              maxLength={20}
               className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
               required
             />
           </div>
           <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('account.confirmPassword')}</label>
+            <label htmlFor="acc-confirm" className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('account.confirmPassword')}</label>
             <input
               type="password"
               value={confirmPassword}
+              id="acc-confirm"
               onChange={(e) => setConfirmPassword(e.target.value)}
               className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
               required
             />
           </div>
-          <Button variant="primary" onClick={handleSubmit} loading={mutation.isPending}>{t('account.submit')}</Button>
+          <Button variant="primary" type="submit" loading={mutation.isPending}>{t('account.submit')}</Button>
         </form>
       </Card>
     </div>

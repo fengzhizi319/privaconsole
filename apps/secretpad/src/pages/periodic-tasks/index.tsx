@@ -1,156 +1,157 @@
+/**
+ * Periodic tasks (legacy `periodic-task-list` + `periodic-child-task-list`).
+ *
+ * - server paging / search (scheduleId) / status filter (UP / DOWN) / createTime sort
+ * - offline (disabled while a sub task runs) / delete (offline tasks only)
+ * - sub-task history drawer: stop, rerun (failed part `type=1` or all `type=0`)
+ * - create: structured schedule form for a successfully-run graph
+ */
 import React, { useEffect, useMemo, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, Badge, Button, Modal, ConfirmDialog, toast } from '@secretpad/design-system';
-import type { PageScheduledVO, TaskPageScheduledVO } from '@secretpad/api-client';
-import { apiClient } from '@secretpad/api-client';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useLocation, useNavigate } from '@tanstack/react-router';
+import {
+  Badge,
+  Button,
+  Card,
+  ConfirmDialog,
+  Drawer,
+  FormField,
+  Input,
+  Modal,
+  Pagination,
+  RadioGroup,
+  Select,
+  toast,
+} from '@secretpad/design-system';
+import {
+  apiClient,
+  deleteScheduledJava,
+  offlineScheduledJava,
+  pageScheduledJava,
+  pageScheduledTasksJava,
+  rerunScheduledTaskJava,
+  stopScheduledTaskJava,
+  type PageScheduledVOJava,
+  type RerunTypeJava,
+  type TaskPageScheduledVOJava,
+} from '@secretpad/api-client';
 import { useTranslation } from '../../shared/lib/i18n';
-import { AccessGuard } from '../../features/auth/ui/access-guard';
-import { Platform } from '../../shared/lib/platform';
+import { usePlatform } from '../../shared/lib/platform';
+import { ScheduleCreateDialog } from '../../features/schedule-form';
+import {
+  canOperateSchedule,
+  scheduleAction,
+  scheduleStatusBadge,
+  shouldPollSubTasks,
+  subTaskActions,
+  subTaskStatusBadge,
+} from './helpers';
+
+const PAGE_SIZE = 10;
+
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export const PeriodicTasksPage: React.FC = () => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const platform = usePlatform();
+  const urlProjectId = String((location.search as Record<string, unknown>)?.projectId ?? '');
 
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(urlProjectId);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [sortDesc, setSortDesc] = useState<boolean | null>(null);
+  const [page, setPage] = useState(1);
 
-  // Create modal
   const [createOpen, setCreateOpen] = useState(false);
   const [createGraphId, setCreateGraphId] = useState('');
-  const [createDesc, setCreateDesc] = useState('');
-  const [createCron, setCreateCron] = useState('0 0 2 * * ?');
+  const [offlineTarget, setOfflineTarget] = useState<PageScheduledVOJava | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PageScheduledVOJava | null>(null);
+  const [runsTask, setRunsTask] = useState<PageScheduledVOJava | null>(null);
 
-  // Delete confirm
-  const [deleteTarget, setDeleteTarget] = useState<PageScheduledVO | null>(null);
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [search]);
 
-  // Task runs drawer
-  const [runsTask, setRunsTask] = useState<PageScheduledVO | null>(null);
-
-  const projectsQuery = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => apiClient.getProjects(),
-  });
+  const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: () => apiClient.getProjects() });
   const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
 
-  // Default the selected project to the first one once projects load.
   useEffect(() => {
-    if (!selectedProjectId && projects.length > 0) {
-      setSelectedProjectId(projects[0].projectId);
-    }
+    if (!selectedProjectId && projects.length > 0) setSelectedProjectId(projects[0].projectId);
   }, [projects, selectedProjectId]);
 
+  const tasksKey = ['scheduled-page', selectedProjectId, debouncedSearch, status, sortDesc, page];
   const tasksQuery = useQuery({
-    queryKey: ['scheduled-tasks', selectedProjectId],
-    queryFn: () => apiClient.getScheduledTasks(selectedProjectId),
+    queryKey: tasksKey,
+    queryFn: () =>
+      pageScheduledJava({
+        projectId: selectedProjectId,
+        search: debouncedSearch,
+        status,
+        page,
+        size: PAGE_SIZE,
+        sort: sortDesc === null ? {} : { createTime: sortDesc ? 'DESC' : 'ASC' },
+      }),
     enabled: !!selectedProjectId,
+    placeholderData: keepPreviousData,
   });
-  const tasks = tasksQuery.data ?? [];
+  const tasks = tasksQuery.data?.list ?? [];
+  const total = tasksQuery.data?.total ?? 0;
 
-  // Graphs for the create form
   const graphsQuery = useQuery({
     queryKey: ['graphs', selectedProjectId],
     queryFn: () => apiClient.getGraphs(selectedProjectId),
     enabled: createOpen && !!selectedProjectId,
   });
-  const graphs = graphsQuery.data ?? [];
-
-  // Graph detail to collect node ids for create
   const graphDetailQuery = useQuery({
     queryKey: ['graph-detail', selectedProjectId, createGraphId],
     queryFn: () => apiClient.getGraphDetail(selectedProjectId, createGraphId),
     enabled: createOpen && !!createGraphId,
   });
+  const createNodeIds = useMemo(
+    () => (graphDetailQuery.data?.nodes || []).map((n) => n.graphNodeId || '').filter(Boolean),
+    [graphDetailQuery.data],
+  );
 
-  // Task runs for the drawer
-  const runsQuery = useQuery({
-    queryKey: ['scheduled-task-runs', runsTask?.scheduleId],
-    queryFn: () => apiClient.getScheduledTaskPage(runsTask!.scheduleId!),
-    enabled: !!runsTask?.scheduleId,
-  });
-  const runs: TaskPageScheduledVO[] = runsQuery.data ?? [];
-
-  const invalidateTasks = () =>
-    queryClient.invalidateQueries({ queryKey: ['scheduled-tasks', selectedProjectId] });
-
-  const createMutation = useMutation({
-    mutationFn: () => {
-      const nodeIds = (graphDetailQuery.data?.nodes || []).map((n) => n.graphNodeId || '').filter(Boolean);
-      return apiClient.createScheduledGraph({
-        projectId: selectedProjectId,
-        graphId: createGraphId,
-        nodes: nodeIds,
-        scheduleDesc: createDesc || undefined,
-        cron: { scheduleTime: createCron },
-      });
-    },
-    onSuccess: () => {
-      setCreateOpen(false);
-      setCreateGraphId('');
-      setCreateDesc('');
-      invalidateTasks();
-      toast.success(t('periodicTasks.createSuccess'));
-    },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
-  });
+  const invalidateTasks = () => queryClient.invalidateQueries({ queryKey: ['scheduled-page'] });
 
   const offlineMutation = useMutation({
-    mutationFn: (task: PageScheduledVO) => apiClient.offlineScheduledTask(task.scheduleId!),
-    onSuccess: invalidateTasks,
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    mutationFn: (task: PageScheduledVOJava) => offlineScheduledJava(task.scheduleId!),
+    onSuccess: () => {
+      setOfflineTarget(null);
+      toast.success(t('periodicTasks.offlineSuccess'));
+      invalidateTasks();
+    },
+    onError: (e) => toast.error(errText(e)),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (task: PageScheduledVO) => apiClient.deleteScheduledTask(task.scheduleId!),
+    mutationFn: (task: PageScheduledVOJava) => deleteScheduledJava(task.scheduleId!),
     onSuccess: () => {
       setDeleteTarget(null);
+      toast.success(t('periodicTasks.deleteSuccess'));
       invalidateTasks();
     },
-    onError: (e) => {
-      setDeleteTarget(null);
-      setError(e instanceof Error ? e.message : String(e));
-    },
+    onError: (e) => toast.error(errText(e)),
   });
 
-  const rerunMutation = useMutation({
-    mutationFn: (run: TaskPageScheduledVO) =>
-      apiClient.rerunScheduledTask({ scheduleId: runsTask!.scheduleId!, scheduleTaskId: run.scheduleTaskId! }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['scheduled-task-runs', runsTask?.scheduleId] });
-      toast.success(t('periodicTasks.rerunSuccess'));
-    },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
-  });
+  const openDetail = (task: PageScheduledVOJava) =>
+    navigate({
+      to: '/periodic-tasks/detail',
+      search: { scheduleId: task.scheduleId || '', projectId: selectedProjectId, graphId: undefined },
+    });
 
-  const stopRunMutation = useMutation({
-    mutationFn: (run: TaskPageScheduledVO) =>
-      apiClient.stopScheduledTask({ scheduleId: runsTask!.scheduleId!, scheduleTaskId: run.scheduleTaskId! }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['scheduled-task-runs', runsTask?.scheduleId] });
-      toast.success(t('periodicTasks.stopSuccess'));
-    },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
-  });
+  const canOperate = (task: PageScheduledVOJava) =>
+    canOperateSchedule(task, { isP2p: platform.isP2p, ownerId: platform.ownerId });
 
-  const statusBadge = (status?: string) => {
-    switch (status?.toUpperCase()) {
-      case 'ONLINE':
-      case 'ACTIVE':
-      case 'SUCCEED':
-        return 'success';
-      case 'OFFLINE':
-      case 'PAUSED':
-        return 'warning';
-      case 'RUNNING':
-        return 'processing';
-      case 'FAILED':
-        return 'error';
-      default:
-        return 'default';
-    }
-  };
-
-  const loading = tasksQuery.isLoading;
-  const queryError = tasksQuery.error?.message || projectsQuery.error?.message || null;
+  const queryError = tasksQuery.error || projectsQuery.error;
 
   return (
     <div className="space-y-6">
@@ -160,165 +161,202 @@ export const PeriodicTasksPage: React.FC = () => {
           <p className="text-xs text-gray-500">{t('periodicTasks.subtitle')}</p>
         </div>
         <div className="flex items-center gap-3">
-          <select
+          <Select
+            aria-label={t('periodicTasks.project')}
             value={selectedProjectId}
-            onChange={(e) => setSelectedProjectId(e.target.value)}
-            className="px-3 py-1.5 rounded-lg text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
+            onChange={(v) => {
+              setSelectedProjectId(v);
+              setPage(1);
+            }}
+            options={projects.map((p) => ({ value: p.projectId, label: p.projectName }))}
+          />
+          <Button
+            variant="primary"
+            disabled={!selectedProjectId}
+            onClick={() => {
+              setCreateGraphId('');
+              setCreateOpen(true);
+            }}
           >
-            {projects.map((p) => (
-              <option key={p.projectId} value={p.projectId}>{p.projectName}</option>
-            ))}
-          </select>
-          <AccessGuard access={{ types: [Platform.CENTER] }}>
-            <Button variant="primary" onClick={() => { setCreateGraphId(''); setCreateDesc(''); setCreateOpen(true); }}>
-              {t('periodicTasks.create')}
-            </Button>
-          </AccessGuard>
+            {t('periodicTasks.create')}
+          </Button>
         </div>
       </div>
 
-      {(error || queryError) && (
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          className="w-56"
+          placeholder={t('periodicTasks.searchPlaceholder')}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <RadioGroup
+          name={t('periodicTasks.status')}
+          value={status}
+          onChange={(v) => {
+            setStatus(v);
+            setPage(1);
+          }}
+          options={[
+            { value: '', label: t('periodicTasks.statusAll') },
+            { value: 'UP', label: t('periodicTasks.statusUP') },
+            { value: 'DOWN', label: t('periodicTasks.statusDOWN') },
+          ]}
+        />
+      </div>
+
+      {queryError && (
         <div className="text-xs text-red-500 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg px-4 py-2">
-          {t('common.error', { message: error || queryError || '' })}
+          {t('common.error', { message: queryError.message })}
         </div>
       )}
 
-      {loading && <div className="text-xs text-gray-400">{t('common.loading')}</div>}
-
       <Card bodyClassName="p-0">
         <table className="w-full text-left text-xs">
-          <thead className="bg-gray-50 dark:bg-gray-850 text-gray-500 font-semibold uppercase border-b border-gray-200 dark:border-gray-800">
+          <thead className="bg-gray-50 dark:bg-gray-850 text-gray-500 font-semibold border-b border-gray-200 dark:border-gray-800">
             <tr>
-              <th className="p-4">{t('periodicTasks.name')}</th>
+              <th className="p-4">{t('periodicTasks.scheduleId')}</th>
+              <th className="p-4">{t('periodicTasks.desc')}</th>
               <th className="p-4">{t('periodicTasks.status')}</th>
               <th className="p-4">{t('periodicTasks.creator')}</th>
-              <th className="p-4">{t('periodicTasks.createTime')}</th>
+              {platform.isP2p && <th className="p-4">{t('periodicTasks.owner')}</th>}
+              <th className="p-4">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-gray-300"
+                  onClick={() => {
+                    setSortDesc((s) => (s === null ? true : s ? false : null));
+                    setPage(1);
+                  }}
+                >
+                  {t('periodicTasks.deployTime')}
+                  <span aria-hidden>{sortDesc === null ? '↕' : sortDesc ? '↓' : '↑'}</span>
+                </button>
+              </th>
               <th className="p-4">{t('common.action')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-            {tasks.length === 0 && !loading && !queryError && (
+            {tasksQuery.isLoading && (
               <tr>
-                <td colSpan={5} className="p-4 text-center text-gray-400">{t('periodicTasks.noData')}</td>
+                <td colSpan={7} className="p-4 text-center text-gray-400">
+                  {t('common.loading')}
+                </td>
               </tr>
             )}
-            {tasks.map((task) => (
-              <tr key={task.scheduleId}>
-                <td className="p-4 font-semibold text-gray-800 dark:text-gray-200">
-                  {task.scheduleDesc || task.scheduleId}
-                </td>
-                <td className="p-4">
-                  <Badge status={statusBadge(task.scheduleStats)}>{task.scheduleStats}</Badge>
-                </td>
-                <td className="p-4 text-gray-500">{task.creator || '-'}</td>
-                <td className="p-4 text-gray-500">{task.createTime}</td>
-                <td className="p-4">
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="ghost" onClick={() => setRunsTask(task)}>{t('messages.detail')}</Button>
-                    <AccessGuard access={{ types: [Platform.CENTER] }}>
-                      <Button size="sm" variant="ghost" onClick={() => offlineMutation.mutate(task)}>{t('periodicTasks.offline')}</Button>
-                      <Button size="sm" variant="danger" onClick={() => setDeleteTarget(task)}>{t('common.delete')}</Button>
-                    </AccessGuard>
-                  </div>
+            {tasks.length === 0 && !tasksQuery.isLoading && !queryError && (
+              <tr>
+                <td colSpan={7} className="p-4 text-center text-gray-400">
+                  {t('periodicTasks.noData')}
                 </td>
               </tr>
-            ))}
+            )}
+            {tasks.map((task) => {
+              const action = scheduleAction(task);
+              return (
+                <tr key={task.scheduleId}>
+                  <td className="p-4">
+                    <button
+                      type="button"
+                      className="font-mono text-blue-600 dark:text-blue-400 hover:underline"
+                      onClick={() => openDetail(task)}
+                    >
+                      {task.scheduleId}
+                    </button>
+                  </td>
+                  <td className="p-4 text-gray-700 dark:text-gray-300 max-w-xs truncate">{task.scheduleDesc || '-'}</td>
+                  <td className="p-4">
+                    <Badge status={scheduleStatusBadge(task.scheduleStats)}>
+                      {task.scheduleStats === 'UP' || task.scheduleStats === 'DOWN'
+                        ? t(`periodicTasks.status${task.scheduleStats}`)
+                        : task.scheduleStats || '-'}
+                    </Badge>
+                  </td>
+                  <td className="p-4 text-gray-500">{task.creator || '-'}</td>
+                  {platform.isP2p && <td className="p-4 text-gray-500">{task.ownerName || '-'}</td>}
+                  <td className="p-4 text-gray-500">{task.createTime || '-'}</td>
+                  <td className="p-4">
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="ghost" onClick={() => setRunsTask(task)}>
+                        {t('periodicTasks.history')}
+                      </Button>
+                      {canOperate(task) && action !== 'delete' && (
+                        <span title={action === 'offlineDisabled' ? t('periodicTasks.offlineRunningHint') : undefined}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={action === 'offlineDisabled'}
+                            onClick={() => setOfflineTarget(task)}
+                          >
+                            {t('periodicTasks.offline')}
+                          </Button>
+                        </span>
+                      )}
+                      {canOperate(task) && action === 'delete' && (
+                        <Button size="sm" variant="danger" onClick={() => setDeleteTarget(task)}>
+                          {t('common.delete')}
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+        {total > 0 && (
+          <div className="p-3 border-t border-gray-100 dark:border-gray-800">
+            <Pagination page={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} />
+          </div>
+        )}
       </Card>
 
-      {/* Create Schedule Modal */}
-      <Modal
+      <ScheduleCreateDialog
         isOpen={createOpen}
         onClose={() => setCreateOpen(false)}
-        title={t('periodicTasks.createTitle')}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setCreateOpen(false)}>{t('common.cancel')}</Button>
-            <Button variant="primary" onClick={() => createMutation.mutate()} loading={createMutation.isPending} disabled={!createGraphId}>{t('common.create')}</Button>
-          </>
-        }
+        projectId={selectedProjectId}
+        graphId={createGraphId}
+        nodeIds={createNodeIds}
+        onCreated={invalidateTasks}
       >
-        <div className="text-xs space-y-4">
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('periodicTasks.selectGraph')}</label>
-            <select
-              value={createGraphId}
-              onChange={(e) => setCreateGraphId(e.target.value)}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
-            >
-              <option value="">-</option>
-              {graphs.map((g) => (
-                <option key={g.graphId} value={g.graphId || ''}>{g.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('periodicTasks.cronLabel')}</label>
-            <input
-              type="text"
-              value={createCron}
-              onChange={(e) => setCreateCron(e.target.value)}
-              placeholder={t('periodicTasks.cronPlaceholder')}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 font-mono focus:outline-none focus:border-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('periodicTasks.name')}</label>
-            <input
-              type="text"
-              value={createDesc}
-              onChange={(e) => setCreateDesc(e.target.value)}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-        </div>
-      </Modal>
+        <FormField label={t('periodicTasks.selectGraph')} required help={t('periodicTasks.createHint')}>
+          <Select
+            className="w-full"
+            value={createGraphId}
+            placeholder="-"
+            onChange={setCreateGraphId}
+            options={(graphsQuery.data ?? []).map((g) => ({ value: g.graphId || '', label: g.name || g.graphId || '' }))}
+          />
+        </FormField>
+      </ScheduleCreateDialog>
 
-      {/* Task Runs Drawer */}
       {runsTask && (
-        <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setRunsTask(null)} />
-          <div className="relative w-full max-w-lg bg-white dark:bg-gray-900 h-full shadow-2xl overflow-y-auto p-6 space-y-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{runsTask.scheduleDesc || runsTask.scheduleId}</h3>
-                <p className="text-xs text-gray-500 font-mono mt-1">{runsTask.scheduleId}</p>
-              </div>
-              <Button size="sm" variant="ghost" onClick={() => setRunsTask(null)}>✕</Button>
-            </div>
-
-            {runsQuery.isLoading && <div className="text-xs text-gray-400">{t('common.loading')}</div>}
-            <div className="space-y-2">
-              {runs.length === 0 && !runsQuery.isLoading && (
-                <div className="text-xs text-gray-400 text-center py-4">{t('projects.noJobs')}</div>
-              )}
-              {runs.map((run) => (
-                <div key={run.scheduleTaskId} className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-gray-800 text-xs">
-                  <div className="min-w-0">
-                    <div className="font-mono text-gray-800 dark:text-gray-200 truncate">{run.scheduleTaskId}</div>
-                    <div className="text-gray-400 mt-0.5">{run.scheduleTaskStartTime || run.scheduleTaskExpectStartTime || '-'}</div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <Badge status={statusBadge(run.scheduleTaskStatus)}>{run.scheduleTaskStatus}</Badge>
-                    <AccessGuard access={{ types: [Platform.CENTER] }}>
-                      <Button size="sm" variant="ghost" loading={rerunMutation.isPending} onClick={() => rerunMutation.mutate(run)}>{t('periodicTasks.rerun')}</Button>
-                      {run.scheduleTaskStatus === 'RUNNING' && (
-                        <Button size="sm" variant="danger" loading={stopRunMutation.isPending} onClick={() => stopRunMutation.mutate(run)}>{t('periodicTasks.stop')}</Button>
-                      )}
-                    </AccessGuard>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <SubTaskDrawer
+          task={runsTask}
+          canOperate={canOperate(runsTask)}
+          projectId={selectedProjectId}
+          onClose={() => {
+            setRunsTask(null);
+            invalidateTasks();
+          }}
+        />
       )}
 
-      {/* Delete Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={!!offlineTarget}
+        title={t('periodicTasks.offline')}
+        message={t('periodicTasks.offlineConfirm')}
+        danger
+        loading={offlineMutation.isPending}
+        confirmText={t('periodicTasks.offline')}
+        cancelText={t('common.cancel')}
+        onConfirm={() => offlineTarget && offlineMutation.mutate(offlineTarget)}
+        onCancel={() => setOfflineTarget(null)}
+      />
+
       <ConfirmDialog
         isOpen={!!deleteTarget}
-        title={t('common.delete')}
+        title={t('periodicTasks.deleteTitle', { id: deleteTarget?.scheduleId || '' })}
         message={t('periodicTasks.deleteConfirm')}
         danger
         loading={deleteMutation.isPending}
@@ -328,5 +366,193 @@ export const PeriodicTasksPage: React.FC = () => {
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
+  );
+};
+
+/** Sub-task (schedule history) drawer with stop / rerun. */
+const SubTaskDrawer: React.FC<{
+  task: PageScheduledVOJava;
+  canOperate: boolean;
+  projectId: string;
+  onClose: () => void;
+}> = ({ task, canOperate, projectId, onClose }) => {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const scheduleId = task.scheduleId || '';
+  const [page, setPage] = useState(1);
+  const [rerunTarget, setRerunTarget] = useState<TaskPageScheduledVOJava | null>(null);
+  const [stopTarget, setStopTarget] = useState<TaskPageScheduledVOJava | null>(null);
+
+  const runsQuery = useQuery({
+    queryKey: ['scheduled-task-page', scheduleId, page],
+    queryFn: () =>
+      pageScheduledTasksJava({
+        scheduleId,
+        page,
+        size: PAGE_SIZE,
+        sort: { scheduleTaskExpectStartTime: 'ASC' },
+        search: '',
+      }),
+    enabled: !!scheduleId,
+    placeholderData: keepPreviousData,
+    refetchInterval: (q) => (shouldPollSubTasks(q.state.data?.list ?? []) ? 10000 : false),
+  });
+  const runs = runsQuery.data?.list ?? [];
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['scheduled-task-page', scheduleId] });
+
+  const rerunMutation = useMutation({
+    mutationFn: (input: { run: TaskPageScheduledVOJava; type: RerunTypeJava }) =>
+      rerunScheduledTaskJava({ scheduleId, scheduleTaskId: input.run.scheduleTaskId!, type: input.type }),
+    onSuccess: () => {
+      setRerunTarget(null);
+      toast.success(t('periodicTasks.rerunSuccess'));
+      refresh();
+    },
+    onError: (e) => toast.error(errText(e)),
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: (run: TaskPageScheduledVOJava) => stopScheduledTaskJava({ scheduleId, scheduleTaskId: run.scheduleTaskId! }),
+    onSuccess: () => {
+      setStopTarget(null);
+      toast.success(t('periodicTasks.stopSuccess'));
+      refresh();
+    },
+    onError: (e) => toast.error(errText(e)),
+  });
+
+  const rerunActions = rerunTarget ? subTaskActions(rerunTarget) : null;
+
+  return (
+    <Drawer isOpen onClose={onClose} width="max-w-4xl" title={t('periodicTasks.historyTitle', { id: scheduleId })}>
+      <div className="space-y-3 text-xs">
+        {runsQuery.error && <div className="text-rose-500">{t('common.error', { message: runsQuery.error.message })}</div>}
+        <table className="w-full text-left">
+          <thead className="text-gray-500 border-b border-gray-200 dark:border-gray-800">
+            <tr>
+              <th className="p-2">{t('periodicTasks.subTaskId')}</th>
+              <th className="p-2">{t('periodicTasks.expectStart')}</th>
+              <th className="p-2">{t('periodicTasks.actualStart')}</th>
+              <th className="p-2">{t('periodicTasks.endTime')}</th>
+              <th className="p-2">{t('periodicTasks.status')}</th>
+              <th className="p-2">{t('common.action')}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+            {runsQuery.isLoading && (
+              <tr>
+                <td colSpan={6} className="p-3 text-center text-gray-400">
+                  {t('common.loading')}
+                </td>
+              </tr>
+            )}
+            {!runsQuery.isLoading && runs.length === 0 && (
+              <tr>
+                <td colSpan={6} className="p-3 text-center text-gray-400">
+                  {t('periodicTasks.noSubTasks')}
+                </td>
+              </tr>
+            )}
+            {runs.map((run) => {
+              const actions = subTaskActions(run);
+              return (
+                <tr key={run.scheduleTaskId}>
+                  <td className="p-2">
+                    <button
+                      type="button"
+                      className="font-mono text-blue-600 dark:text-blue-400 hover:underline"
+                      onClick={() =>
+                        navigate({
+                          to: '/periodic-tasks/detail',
+                          search: {
+                            scheduleId,
+                            projectId,
+                            graphId: undefined,
+                            scheduleTaskId: run.scheduleTaskId,
+                          },
+                        })
+                      }
+                    >
+                      {run.scheduleTaskId}
+                    </button>
+                  </td>
+                  <td className="p-2 text-gray-500">{run.scheduleTaskExpectStartTime || '-'}</td>
+                  <td className="p-2 text-gray-500">{run.scheduleTaskStartTime || '-'}</td>
+                  <td className="p-2 text-gray-500">{run.scheduleTaskEndTime || '-'}</td>
+                  <td className="p-2">
+                    <Badge status={subTaskStatusBadge(run.scheduleTaskStatus)}>
+                      {run.scheduleTaskStatus ? t(`periodicTasks.subStatus.${run.scheduleTaskStatus}`) : '-'}
+                    </Badge>
+                  </td>
+                  <td className="p-2">
+                    {!canOperate || (!actions.stop && actions.rerun.length === 0) ? (
+                      '-'
+                    ) : (
+                      <div className="flex gap-2">
+                        {actions.stop && (
+                          <Button size="sm" variant="danger" onClick={() => setStopTarget(run)}>
+                            {t('periodicTasks.stop')}
+                          </Button>
+                        )}
+                        {actions.rerun.length > 0 && (
+                          <Button size="sm" variant="ghost" onClick={() => setRerunTarget(run)}>
+                            {t('periodicTasks.rerun')}
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {(runsQuery.data?.total ?? 0) > 0 && (
+          <Pagination page={page} pageSize={PAGE_SIZE} total={runsQuery.data?.total ?? 0} onChange={setPage} />
+        )}
+      </div>
+
+      <Modal
+        isOpen={!!rerunTarget}
+        onClose={() => setRerunTarget(null)}
+        title={t('periodicTasks.rerun')}
+        width="max-w-md"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRerunTarget(null)}>
+              {t('common.cancel')}
+            </Button>
+            {rerunActions?.rerun.map((opt) => (
+              <Button
+                key={opt.type}
+                variant={opt.type === rerunActions.rerun[0].type ? 'primary' : 'outline'}
+                disabled={opt.disabled}
+                loading={rerunMutation.isPending && rerunMutation.variables?.type === opt.type}
+                onClick={() => rerunTarget && rerunMutation.mutate({ run: rerunTarget, type: opt.type })}
+              >
+                {t(opt.labelKey)}
+              </Button>
+            ))}
+          </>
+        }
+      >
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          {rerunActions?.confirmKey ? t(rerunActions.confirmKey) : ''}
+        </p>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={!!stopTarget}
+        title={t('periodicTasks.stop')}
+        message={t('periodicTasks.stopConfirm')}
+        danger
+        loading={stopMutation.isPending}
+        confirmText={t('periodicTasks.stop')}
+        cancelText={t('common.cancel')}
+        onConfirm={() => stopTarget && stopMutation.mutate(stopTarget)}
+        onCancel={() => setStopTarget(null)}
+      />
+    </Drawer>
   );
 };

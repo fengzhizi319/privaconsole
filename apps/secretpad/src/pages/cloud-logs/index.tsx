@@ -15,24 +15,14 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, Button, Badge } from '@secretpad/design-system';
 import { apiClient } from '@secretpad/api-client';
-import { LogViewer } from '@secretpad/dag-next';
+import { LogViewer, statusBadge as jobStatusBadge } from '@secretpad/dag-next';
 import { useTranslation } from '../../shared/lib/i18n';
 
-/** 任务状态到 Badge 状态的映射。 */
-function statusBadge(status?: string): 'success' | 'processing' | 'error' | 'default' {
-  switch ((status || '').toUpperCase()) {
-    case 'SUCCEED':
-      return 'success';
-    case 'RUNNING':
-    case 'INITIALIZED':
-    case 'STAGING':
-      return 'processing';
-    case 'FAILED':
-      return 'error';
-    default:
-      return 'default';
-  }
-}
+/** 旧版 SlsLogLabel 的 SLS 集成帮助文档链接。 */
+const SLS_HELP_URL = 'https://help.aliyun.com/zh/sls/getting-started';
+
+/** 任务状态到 Badge 状态的映射（统一使用 dag-next/status）。 */
+const statusBadge = jobStatusBadge;
 
 export const CloudLogsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -200,8 +190,18 @@ export const CloudLogsPage: React.FC = () => {
         </div>
       )}
 
+      {/* 后端返回 config:false —— 未配置 SLS（旧版 SlsLogLabel 提示） */}
+      {hasFetched && !error && result?.config === false && (
+        <div role="alert" className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-lg px-4 py-2">
+          {t('cloudLogs.notConfigured')}{' '}
+          <a className="underline" href={SLS_HELP_URL} target="_blank" rel="noreferrer">
+            {t('cloudLogs.helpDoc')}
+          </a>
+        </div>
+      )}
+
       {/* 查询结果：状态 + 参与节点 + 日志查看器 */}
-      {hasFetched && !error && (
+      {hasFetched && !error && result?.config !== false && (
         <div className="space-y-4">
           {/* 任务状态与参与节点概要 */}
           <Card>

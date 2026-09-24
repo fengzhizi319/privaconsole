@@ -8,6 +8,7 @@
  * 通过统一封装，模板实现只关注拓扑与参数，避免重复硬编码。
  */
 import type { GraphEdge, GraphNodeInfo } from '@secretpad/api-client';
+import { toList } from './types';
 
 /** 生成节点 ID。 */
 export function nodeId(graphId: string, idx: number): string {
@@ -126,14 +127,19 @@ export function createPsiNode(
   idx: number,
   inputs: string[],
   options: {
-    receiverKey: string;
-    senderKey: string;
+    receiverKey: string | string[];
+    senderKey: string | string[];
     receiverNodeId: string;
     senderNodeId: string;
+    /** PSI 结果接收方（旧版 receiverPSI）；缺省为两方。 */
+    receiverParties?: string[];
     x: number;
     y: number;
   }
 ): GraphNodeInfo {
+  const rk = toList(options.receiverKey);
+  const sk = toList(options.senderKey);
+  const parties = options.receiverParties?.length ? options.receiverParties : [options.receiverNodeId, options.senderNodeId].filter(Boolean);
   return createNode(graphId, idx, 'data_prep/psi', '隐私求交', {
     x: options.x,
     y: options.y,
@@ -143,28 +149,33 @@ export function createPsiNode(
       domain: 'data_prep',
       name: 'psi',
       version: '1.0.0',
-      attrPaths: [
-        'input/input_ds1/keys',
-        'input/input_ds2/keys',
-        'protocol',
-        'sort_result',
-        'receiver_parties',
-        'allow_empty_result',
-        'join_type',
-        'input_ds1_keys_duplicated',
-        'input_ds2_keys_duplicated',
-      ],
-      attrs: [
-        { ss: [options.receiverKey], is_na: false },
-        { ss: [options.senderKey], is_na: false },
-        { s: 'PROTOCOL_RR22', is_na: false },
-        { b: true, is_na: false },
-        { ss: [options.receiverNodeId, options.senderNodeId], is_na: false },
-        { is_na: true },
-        { s: 'inner_join', is_na: false },
-        { b: true, is_na: false },
-        { b: true, is_na: false },
-      ],
+      // 旧版：只有同时给出双方关联键时才写入 attrs。
+      ...(rk.length && sk.length
+        ? {
+            attrPaths: [
+              'input/input_ds1/keys',
+              'input/input_ds2/keys',
+              'protocol',
+              'sort_result',
+              'receiver_parties',
+              'allow_empty_result',
+              'join_type',
+              'input_ds1_keys_duplicated',
+              'input_ds2_keys_duplicated',
+            ],
+            attrs: [
+              { ss: rk, is_na: false },
+              { ss: sk, is_na: false },
+              { s: 'PROTOCOL_RR22', is_na: false },
+              { b: true, is_na: false },
+              { ss: parties, is_na: false },
+              { is_na: true },
+              { s: 'inner_join', is_na: false },
+              { b: true, is_na: false },
+              { b: true, is_na: false },
+            ],
+          }
+        : {}),
     },
   });
 }
@@ -235,22 +246,25 @@ export function createTeePsiNode(
   idx: number,
   inputs: string[],
   options: {
-    receiverKey: string;
-    senderKey: string;
+    receiverKey: string | string[];
+    senderKey: string | string[];
     x: number;
     y: number;
   }
 ): GraphNodeInfo {
+  const rk = toList(options.receiverKey);
+  const sk = toList(options.senderKey);
   return createNode(graphId, idx, 'preprocessing/psi', '隐私求交', {
     x: options.x,
     y: options.y,
     inputs,
     outputs: [outputAnchor(graphId, idx, 0)],
     nodeDef: {
-      ...(options.receiverKey && options.senderKey
+      ...(rk.length && sk.length
         ? {
             attrPaths: ['input/input1/key', 'input/input2/key'],
-            attrs: [sAttr(options.receiverKey), sAttr(options.senderKey)],
+            // 旧版快速配置写入 `{ ss: [...] }`（可多个关联键）。
+            attrs: [ssAttr(rk), ssAttr(sk)],
           }
         : {}),
       domain: 'preprocessing',

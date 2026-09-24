@@ -12,8 +12,8 @@ import { useNavigate } from '@tanstack/react-router';
 import { Card, Button, Modal, ConfirmDialog, toast } from '@secretpad/design-system';
 import { apiClient, type GraphMetaVO } from '@secretpad/api-client';
 import { useTranslation } from '../../shared/lib/i18n';
-import { AccessGuard } from '../../features/auth/ui/access-guard';
-import { Platform } from '../../shared/lib/platform';
+import { usePlatform } from '../../shared/lib/platform';
+import { dagEditPermissions } from '../dag/edit-permissions';
 
 export const GraphsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -45,6 +45,20 @@ export const GraphsPage: React.FC = () => {
   });
 
   const graphs = graphsQuery.data ?? [];
+
+  // 与 DAG 页同一套细粒度权限（旧版 ProjectEditService.canEdit）：新建看项目级，
+  // 删除看训练流级（归档 / 待审批项目、P2P 下非我方训练流不可删除）。
+  const platform = usePlatform();
+  const selectedProject = projects.find((p) => p.projectId === selectedProjectId);
+  const permsFor = (graphOwnerId?: string) =>
+    dagEditPermissions({
+      platformType: platform.platformType,
+      ownerId: platform.ownerId,
+      project: selectedProject ? { status: selectedProject.status } : null,
+      projectsLoaded: projectsQuery.isSuccess && !!selectedProjectId,
+      graphOwnerId,
+    });
+  const canCreate = permsFor().project;
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -104,11 +118,11 @@ export const GraphsPage: React.FC = () => {
               </option>
             ))}
           </select>
-          <AccessGuard access={{ types: [Platform.CENTER] }}>
+          {canCreate && (
             <Button variant="primary" onClick={() => setCreateOpen(true)}>
               {t('graphs.create')}
             </Button>
-          </AccessGuard>
+          )}
         </div>
       </div>
 
@@ -164,11 +178,11 @@ export const GraphsPage: React.FC = () => {
                       >
                         {t('graphs.openDag')}
                       </Button>
-                      <AccessGuard access={{ types: [Platform.CENTER] }}>
+                      {permsFor(graph.ownerId).graph && (
                         <Button size="sm" variant="danger" onClick={() => setDeleteTarget(graph)}>
                           {t('common.delete')}
                         </Button>
-                      </AccessGuard>
+                      )}
                     </div>
                   </td>
                 </tr>

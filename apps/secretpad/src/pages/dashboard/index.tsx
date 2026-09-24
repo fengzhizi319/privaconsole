@@ -2,9 +2,12 @@ import React from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { Card, Badge, Button } from '@secretpad/design-system';
-import { apiClient } from '@secretpad/api-client';
+import { apiClient, countNodeResultsJava } from '@secretpad/api-client';
 import { useTranslation } from '../../shared/lib/i18n';
 import { useState } from 'react';
+import { usePlatform } from '../../shared/lib/platform';
+import { GuideNodeCard } from './guide-node-card';
+import { NODE_STATUS, normalizeStatus, statusBadge } from '@secretpad/dag-next';
 
 /** localStorage 中引导 banner 被关闭的标记键名。 */
 const GUIDE_BANNER_DISMISSED_KEY = 'secretpad-guide-banner-dismissed';
@@ -62,6 +65,12 @@ export const DashboardPage: React.FC = () => {
     queryFn: () => apiClient.getJobs(),
   });
 
+  const platform = usePlatform();
+  const resultsQuery = useQuery({
+    queryKey: ['dashboard-results-count', platform.ownerId],
+    queryFn: () => countNodeResultsJava(platform.ownerId || undefined),
+  });
+
   const nodes = nodesQuery.data ?? [];
   const projects = projectsQuery.data ?? [];
   const jobs = jobsQuery.data ?? [];
@@ -88,6 +97,10 @@ export const DashboardPage: React.FC = () => {
     })),
   });
   const totalTables = tablesQueries.reduce((sum, q) => sum + (q.data?.length ?? 0), 0);
+  const tableCounts: Record<string, number> = {};
+  nodes.forEach((n, i) => {
+    tableCounts[n.nodeId] = tablesQueries[i]?.data?.length ?? 0;
+  });
 
   const error =
     nodesQuery.error?.message ||
@@ -127,7 +140,7 @@ export const DashboardPage: React.FC = () => {
       )}
 
       {/* Stat Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <Card className="hover:border-blue-500/50 transition-all cursor-pointer" bodyClassName="p-4">
           <div className="flex items-center justify-between text-xs text-gray-500 font-medium">
             <span>{t('dashboard.projects')}</span>
@@ -168,8 +181,17 @@ export const DashboardPage: React.FC = () => {
           </div>
           <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{jobs.length}</div>
           <div className="mt-1 text-[11px] text-emerald-600 font-medium">
-            {jobs.length > 0 ? `${Math.round((jobs.filter((j) => j.status === 'SUCCEEDED').length / jobs.length) * 100)}% ${t('dashboard.successRate')}` : t('dashboard.noJobs')}
+            {jobs.length > 0 ? `${Math.round((jobs.filter((j) => normalizeStatus(j.status) === NODE_STATUS.SUCCEED).length / jobs.length) * 100)}% ${t('dashboard.successRate')}` : t('dashboard.noJobs')}
           </div>
+        </Card>
+
+        <Card className="hover:border-blue-500/50 transition-all cursor-pointer" bodyClassName="p-4" onClick={() => navigate({ to: '/results' })}>
+          <div className="flex items-center justify-between text-xs text-gray-500 font-medium">
+            <span>{t('dashboard.results')}</span>
+            <span className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-600">📦</span>
+          </div>
+          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{resultsQuery.isError ? '-' : (resultsQuery.data ?? 0)}</div>
+          <div className="mt-1 text-[11px] text-gray-500">{t('dashboard.resultsHint')}</div>
         </Card>
 
         <Card className="hover:border-blue-500/50 transition-all cursor-pointer" bodyClassName="p-4">
@@ -200,17 +222,17 @@ export const DashboardPage: React.FC = () => {
                 <div key={job.jobId} className="py-3 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs ${
-                      job.status === 'RUNNING' ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 animate-spin' :
-                      job.status === 'SUCCEEDED' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50' : 'bg-gray-100'
+                      normalizeStatus(job.status) === NODE_STATUS.RUNNING ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 animate-spin' :
+                      normalizeStatus(job.status) === NODE_STATUS.SUCCEED ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50' : 'bg-gray-100'
                     }`}>
-                      {job.status === 'RUNNING' ? '🔄' : '✓'}
+                      {normalizeStatus(job.status) === NODE_STATUS.RUNNING ? '🔄' : '✓'}
                     </div>
                     <div>
                       <div className="font-semibold text-sm text-gray-800 dark:text-gray-200">{job.name}</div>
                       <div className="text-xs text-gray-400 font-mono">Job ID: {job.jobId} • {t('common.duration') || 'Duration'}: {job.duration || '-'}</div>
                     </div>
                   </div>
-                  <Badge status={job.status === 'RUNNING' ? 'processing' : job.status === 'FAILED' ? 'error' : 'success'}>
+                  <Badge status={statusBadge(job.status)}>
                     {job.status}
                   </Badge>
                 </div>
@@ -254,6 +276,8 @@ export const DashboardPage: React.FC = () => {
 
         {/* Right Column: Node Topology & Quick Actions */}
         <div className="space-y-6">
+          <GuideNodeCard tableCounts={tableCounts} />
+
           <Card title={t('dashboard.nodeTopology')}>
             <div className="space-y-3">
               {nodes.length === 0 && (

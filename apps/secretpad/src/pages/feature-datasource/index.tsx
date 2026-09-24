@@ -1,16 +1,16 @@
 /**
- * 特征数据源 / 投票同步页面（Feature Datasource & Vote Sync）。
+ * 特征数据源页面（Feature Datasource）。
  *
  * 对应旧前端尚未迁移的两个后端控制器：
  * - `FeatureDatasourceController`：特征数据源的创建（`feature_datasource/create`）
  *   与授权列表查询（`feature_datasource/auth/list`）；
- * - `VoteSyncController`：跨节点数据同步投票（`vote_sync/create`）。
  *
- * 页面分为两个 Tab：
- * 1. 特征数据源：选择项目 + 节点后查询该节点在该项目下被授权的特征表及其字段，
+ * 注：`VoteSyncController`（`vote_sync/create`）是后端之间的同步接口，
+ * 不应由前端直接调用，因此不再提供“投票同步”入口。
+ *
+ * 页面功能：
+ * 特征数据源：选择项目 + 节点后查询该节点在该项目下被授权的特征表及其字段，
  *    并支持创建新的特征数据源（动态编辑字段、多选授权节点）；
- * 2. 投票同步：选择项目、同步数据类型（对应后端 `VoteSyncTypeEnum`）与参与节点，
- *    发起一次跨节点数据同步投票。
  */
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -21,23 +21,10 @@ import { useTranslation } from '../../shared/lib/i18n';
 import { useAuthStore } from '../../features/auth/model/auth-store';
 
 /**
- * 同步数据类型选项，对应后端 `VoteSyncTypeEnum`。
- *
- * 这些值决定了本次投票同步要同步哪一类数据（项目、节点路由、数据表管理等）。
+ * 特征数据源类型：Java `CreateFeatureDatasourceRequest.type` 为 @OneOfType({"HTTP"})，
+ * Go 同样只接受 HTTP（在线特征服务 url）。
  */
-const SYNC_DATA_TYPES = [
-  'VOTE_REQUEST',
-  'VOTE_INVITE',
-  'NODE_ROUTE',
-  'TEE_NODE_DATATABLE_MANAGEMENT',
-  'PROJECT_APPROVAL_CONFIG',
-  'PROJECT',
-  'PROJECT_NODE',
-  'PROJECT_INST',
-];
-
-/** 特征数据源类型选项（与后端数据源类型保持一致）。 */
-const FEATURE_DS_TYPES = ['mysql', 'postgres', 'csv', 'localfs'];
+const FEATURE_DS_TYPES = ['HTTP'];
 
 /** 创建表单中的单个字段行（可编辑的 TableColumnVO）。 */
 interface ColumnRow {
@@ -55,7 +42,7 @@ export const FeatureDatasourcePage: React.FC = () => {
   const ownerId = user?.ownerId || '';
 
   // 当前激活的 Tab：特征数据源 / 投票同步。
-  const [activeTab, setActiveTab] = useState<'feature' | 'voteSync'>('feature');
+  const [activeTab, setActiveTab] = useState<'feature'>('feature');
 
   /* ------------------------- 特征数据源查询状态 ------------------------- */
   const [queryProjectId, setQueryProjectId] = useState('');
@@ -66,16 +53,11 @@ export const FeatureDatasourcePage: React.FC = () => {
   /* ------------------------- 创建表单状态 ------------------------- */
   const [createOpen, setCreateOpen] = useState(false);
   const [featureTableName, setFeatureTableName] = useState('');
-  const [dsType, setDsType] = useState('mysql');
+  const [dsType, setDsType] = useState('HTTP');
   const [dsUrl, setDsUrl] = useState('');
   const [dsDesc, setDsDesc] = useState('');
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [columnRows, setColumnRows] = useState<ColumnRow[]>([{ colName: '', colType: 'string', colComment: '' }]);
-
-  /* ------------------------- 投票同步状态 ------------------------- */
-  const [syncProjectId, setSyncProjectId] = useState('');
-  const [syncType, setSyncType] = useState('');
-  const [syncNodeIds, setSyncNodeIds] = useState<string[]>([]);
 
   /* ------------------------------ 数据查询 ------------------------------ */
 
@@ -133,29 +115,12 @@ export const FeatureDatasourcePage: React.FC = () => {
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
-  // 发起投票同步。
-  const syncMutation = useMutation({
-    mutationFn: () =>
-      apiClient.createVoteSync([
-        {
-          projectNodesInfo: { projectId: syncProjectId, nodeIds: syncNodeIds },
-          syncDataType: syncType,
-        },
-      ]),
-    onSuccess: () => {
-      toast.success(t('featureDs.syncSuccess'));
-      setSyncType('');
-      setSyncNodeIds([]);
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
-  });
-
   /* ------------------------------ 表单辅助 ------------------------------ */
 
   /** 重置创建表单。 */
   const resetCreateForm = () => {
     setFeatureTableName('');
-    setDsType('mysql');
+    setDsType('HTTP');
     setDsUrl('');
     setDsDesc('');
     setSelectedNodeIds([]);
@@ -170,11 +135,6 @@ export const FeatureDatasourcePage: React.FC = () => {
   /** 切换某节点在授权列表中的选中状态。 */
   const toggleNodeId = (nodeId: string) => {
     setSelectedNodeIds((prev) => (prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId]));
-  };
-
-  /** 切换某节点在投票同步中的选中状态。 */
-  const toggleSyncNode = (nodeId: string) => {
-    setSyncNodeIds((prev) => (prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId]));
   };
 
   const queryError = featureListQuery.error?.message || null;
@@ -197,14 +157,6 @@ export const FeatureDatasourcePage: React.FC = () => {
             }`}
           >
             {t('featureDs.tabFeature')}
-          </button>
-          <button
-            onClick={() => setActiveTab('voteSync')}
-            className={`px-4 py-2 text-xs font-medium transition-colors ${
-              activeTab === 'voteSync' ? 'bg-blue-600 text-white' : 'bg-gray-50 dark:bg-gray-800 text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {t('featureDs.tabVoteSync')}
           </button>
         </div>
       </div>
@@ -305,95 +257,6 @@ export const FeatureDatasourcePage: React.FC = () => {
             </div>
           )}
         </>
-      )}
-
-      {/* ============================ 投票同步 Tab ============================ */}
-      {activeTab === 'voteSync' && (
-        <Card>
-          <div className="mb-4">
-            <h3 className="font-bold text-sm text-gray-900 dark:text-gray-100">{t('featureDs.voteSyncTitle')}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">{t('featureDs.voteSyncSubtitle')}</p>
-          </div>
-
-          <div className="space-y-4 text-xs">
-            {/* 项目选择 */}
-            <div>
-              <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                {t('featureDs.project')} <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={syncProjectId}
-                onChange={(e) => setSyncProjectId(e.target.value)}
-                className="w-full md:w-1/2 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
-              >
-                <option value="">{t('featureDs.selectProject')}</option>
-                {projects.map((p) => (
-                  <option key={p.projectId} value={p.projectId}>{p.projectName}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* 同步数据类型 */}
-            <div>
-              <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                {t('featureDs.syncDataType')} <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={syncType}
-                onChange={(e) => setSyncType(e.target.value)}
-                className="w-full md:w-1/2 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 font-mono focus:outline-none focus:border-blue-500"
-              >
-                <option value="">{t('featureDs.selectSyncType')}</option>
-                {SYNC_DATA_TYPES.map((type) => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* 参与节点多选 */}
-            <div>
-              <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                {t('featureDs.syncNodes')} <span className="text-red-500">*</span>
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {nodes.map((n) => {
-                  const checked = syncNodeIds.includes(n.nodeId);
-                  return (
-                    <label
-                      key={n.nodeId}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer select-none transition-colors ${
-                        checked
-                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
-                          : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-blue-400'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleSyncNode(n.nodeId)}
-                        className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="font-medium">{n.nodeName || n.nodeId}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              {syncNodeIds.length === 0 && <div className="text-[11px] text-gray-400 mt-1">{t('featureDs.selectNodes')}</div>}
-            </div>
-
-            {/* 提交按钮 */}
-            <div className="pt-2">
-              <Button
-                variant="primary"
-                onClick={() => syncMutation.mutate()}
-                disabled={!syncProjectId || !syncType || syncNodeIds.length === 0}
-                loading={syncMutation.isPending}
-              >
-                {t('featureDs.submitSync')}
-              </Button>
-            </div>
-          </div>
-        </Card>
       )}
 
       {/* ============================ 创建特征数据源 Modal ============================ */}

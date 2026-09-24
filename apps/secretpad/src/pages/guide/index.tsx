@@ -15,6 +15,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Card, Button, Badge } from '@secretpad/design-system';
 import { useTranslation } from '../../shared/lib/i18n';
+import { useGuideTourStore } from '../../features/guide-tour';
+import { GuideConcepts } from './concepts';
 
 /** localStorage 中保存引导进度的键名。 */
 const GUIDE_PROGRESS_KEY = 'secretpad-guide-progress';
@@ -103,6 +105,7 @@ function saveProgress(done: Set<string>): void {
 export const GuidePage: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const startTour = useGuideTourStore((s) => s.start);
 
   // 已完成步骤集合（初始从 localStorage 恢复）。
   const [done, setDone] = useState<Set<string>>(() => loadProgress());
@@ -139,11 +142,16 @@ export const GuidePage: React.FC = () => {
             <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('guide.title')}</h2>
             <p className="text-xs text-gray-500 mt-1">{t('guide.subtitle')}</p>
           </div>
+          <div className="flex items-center gap-4">
+          <Button variant="primary" size="sm" data-tour="guide-start-tour" onClick={() => startTour(0)}>
+            🧭 {t('guideTour.startButton')}
+          </Button>
           <div className="text-right">
             <div className="text-2xl font-bold text-blue-600">{percent}%</div>
             <div className="text-[11px] text-gray-400">
               {t('guide.progress', { done: doneCount, total })}
             </div>
+          </div>
           </div>
         </div>
         {/* 进度条 */}
@@ -161,6 +169,9 @@ export const GuidePage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* 核心概念说明（旧前端 guide / guide-pipeline） */}
+      <GuideConcepts />
 
       {/* 步骤卡片列表 */}
       <div className="space-y-4">

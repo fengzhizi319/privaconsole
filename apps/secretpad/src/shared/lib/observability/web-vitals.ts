@@ -68,6 +68,7 @@ function reportToBackend(metric: Metric): void {
 function handleMetric(metric: Metric): void {
   // 开发期可视化，方便本地性能调优。
   if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-console -- dev-only metric trace
     console.info(
       `[WebVitals] ${metric.name} = ${metric.value.toFixed(2)} (${metric.rating})`
     );

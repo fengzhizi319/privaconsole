@@ -1,225 +1,259 @@
-import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, Badge, Button, Modal, toast } from '@secretpad/design-system';
-import type { User, MessageVO } from '@secretpad/api-client';
-import { apiClient } from '@secretpad/api-client';
+/**
+ * Message center (legacy `modules/message-center`).
+ *
+ * Tabs 我处理的 / 我发起的 (isInitiator), status filter (isProcessed), type
+ * filter, keyword search, server paging, per-type detail drawer, approve /
+ * reject (reason ≤ 50 chars) and "enter project" for fully-approved P2P votes.
+ */
+import React, { useEffect, useState } from 'react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
+import { Button, Card, Input, Pagination, RadioGroup, Select, Tabs } from '@secretpad/design-system';
+import {
+  getPendingMessageCountJava,
+  listMessagesJava,
+  type MessageVOJava,
+} from '@secretpad/api-client';
 import { useTranslation } from '../../shared/lib/i18n';
-import { useAuthStore } from '../../features/auth/model/auth-store';
-import { CreateApprovalModal } from '../../features/approval/create-approval-modal';
-import { ApprovalStatusPoller } from '../../features/approval/approval-status-poller';
+import { usePlatform } from '../../shared/lib/platform';
+import { VoteStatusBadge } from '../../features/approval/participant-groups';
+import { VoteReplyButtons } from '../../features/approval/vote-reply';
+import { MessageDetailDrawer } from './message-detail';
+import {
+  buildMessageListRequest,
+  canEnterProjectFromMessage,
+  canReplyMessage,
+  messageTypesFor,
+  type MessageStateFilter,
+  type MessageTab,
+} from './helpers';
 
-const PENDING_STATUSES = ['PENDING', 'WAITING', 'REVIEWING'];
+const PAGE_SIZE = 10;
 
 export const MessagesPage: React.FC = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuthStore();
+  const { ownerId, isP2p } = usePlatform();
 
-  const ownerId = (user as User | null)?.ownerId || '';
+  const [tab, setTab] = useState<MessageTab>('process');
+  const [state, setState] = useState<MessageStateFilter>('');
+  const [type, setType] = useState('');
+  const [keyword, setKeyword] = useState('');
+  const [debouncedKeyword, setDebouncedKeyword] = useState('');
+  const [page, setPage] = useState(1);
+  const [detail, setDetail] = useState<MessageVOJava | null>(null);
 
-  const [replyTarget, setReplyTarget] = useState<MessageVO | null>(null);
-  const [replyReason, setReplyReason] = useState('');
-  const [detailTarget, setDetailTarget] = useState<MessageVO | null>(null);
-  // 审批主动创建 Modal 的开关状态。
-  const [createOpen, setCreateOpen] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setDebouncedKeyword(keyword);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [keyword]);
 
-  const messagesQuery = useQuery({
-    queryKey: ['messages', ownerId],
-    queryFn: () => apiClient.getMessages(ownerId, 1, 100),
+  const request = buildMessageListRequest({
+    tab,
+    state,
+    type,
+    keyword: debouncedKeyword,
+    page,
+    size: PAGE_SIZE,
+    ownerId,
+  });
+
+  const listQuery = useQuery({
+    queryKey: ['messages-java', request],
+    queryFn: () => listMessagesJava(request),
+    enabled: !!ownerId,
+    placeholderData: keepPreviousData,
+  });
+  const messages = listQuery.data?.messages ?? [];
+  const total = listQuery.data?.total ?? 0;
+
+  const pendingQuery = useQuery({
+    queryKey: ['messages-pending-java', ownerId],
+    queryFn: () => getPendingMessageCountJava(ownerId),
     enabled: !!ownerId,
   });
-  const messages = messagesQuery.data ?? [];
 
-  const pendingCountQuery = useQuery({
-    queryKey: ['pending-message-count', ownerId],
-    queryFn: () => apiClient.getPendingMessageCount(ownerId),
-    enabled: !!ownerId,
-  });
-  const pendingCount = pendingCountQuery.data ?? 0;
-
-  const detailQuery = useQuery({
-    queryKey: ['message-detail', detailTarget?.voteID],
-    queryFn: () =>
-      apiClient.getMessageDetail({
-        ownerId,
-        voteId: detailTarget!.voteID!,
-        isInitiator: false,
-        voteType: detailTarget!.type || '',
-      }),
-    enabled: !!detailTarget && !!detailTarget.voteID,
-  });
-
-  const invalidateMessages = () => {
-    queryClient.invalidateQueries({ queryKey: ['messages', ownerId] });
-    queryClient.invalidateQueries({ queryKey: ['pending-message-count', ownerId] });
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['messages-java'] });
+    queryClient.invalidateQueries({ queryKey: ['messages-pending-java'] });
+    queryClient.invalidateQueries({ queryKey: ['pending-message-count'] });
   };
 
-  const replyMutation = useMutation({
-    mutationFn: (action: string) =>
-      apiClient.replyMessage({
-        voteId: replyTarget!.voteID!,
-        voteParticipantId: ownerId,
-        action,
-        reason: replyReason || undefined,
-      }),
-    onSuccess: () => {
-      setReplyTarget(null);
-      setReplyReason('');
-      invalidateMessages();
-      toast.success(t('messages.replySuccess'));
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
-  });
-
-  const handleRefresh = () => invalidateMessages();
-
-  const isPending = (msg: MessageVO) =>
-    PENDING_STATUSES.includes((msg.status || '').toUpperCase());
-
-  const statusBadge = (status?: string) => {
-    switch (status?.toUpperCase()) {
-      case 'PENDING':
-      case 'WAITING':
-      case 'REVIEWING':
-        return 'warning';
-      case 'AGREE':
-      case 'APPROVED':
-      case 'SUCCEED':
-        return 'success';
-      case 'REJECT':
-      case 'REJECTED':
-      case 'FAILED':
-        return 'error';
-      default:
-        return 'default';
-    }
+  const changeTab = (key: string) => {
+    setTab(key as MessageTab);
+    setState('');
+    setPage(1);
+    setDetail(null);
   };
 
-  const loading = messagesQuery.isLoading;
-  const error = messagesQuery.error?.message || pendingCountQuery.error?.message || null;
+  const titleOf = (m: MessageVOJava) => {
+    const suffix = m.type ? t(`msgCenter.suffix.${m.type}`) : '';
+    const from =
+      m.type === 'PROJECT_CREATE' && m.initiatingTypeMessage?.initiatorNodeName
+        ? t('msgCenter.fromInst', { name: m.initiatingTypeMessage.initiatorNodeName })
+        : '';
+    return `${from}${m.messageName || ''}${suffix}`;
+  };
+
+  const enterProject = (m: MessageVOJava) =>
+    navigate({ to: '/dag', search: { projectId: m.voteTypeMessage?.projectId } });
+
+  const typeOptions = [
+    { value: '', label: t('msgCenter.allTypes') },
+    ...messageTypesFor(isP2p).map((v) => ({ value: v, label: t(`msgCenter.types.${v}`) })),
+  ];
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
-        <div>
-          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('messages.title')}</h2>
-          <p className="text-xs text-gray-500">{t('messages.subtitle')}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Badge status={pendingCount > 0 ? 'warning' : 'success'}>
-            {t('messages.pendingCount', { count: pendingCount })}
-          </Badge>
-          <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>{t('approval.create')}</Button>
-          <Button size="sm" variant="outline" onClick={handleRefresh}>{t('common.refresh')}</Button>
-        </div>
+      <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
+        <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('messages.title')}</h2>
+        <p className="text-xs text-gray-500">{t('messages.subtitle')}</p>
       </div>
 
-      {/* 审批状态轮询：填写资源定位字段后按间隔轮询各参与方投票状态 */}
-      <ApprovalStatusPoller />
-
-      {error && (
-        <div className="text-xs text-red-500 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg px-4 py-2">
-          {t('common.error', { message: error })}
-        </div>
-      )}
-
-      {loading && <div className="text-xs text-gray-400">{t('common.loading')}</div>}
-
-      <Card bodyClassName="p-0">
-        <div className="divide-y divide-gray-100 dark:divide-gray-800 text-xs">
-          {messages.length === 0 && !loading && !error && (
-            <div className="p-4 text-center text-gray-400">{t('messages.noData')}</div>
-          )}
-          {messages.map((msg) => (
-            <div key={msg.voteID || msg.messageName} className="p-4 flex items-center justify-between hover:bg-gray-50/50 dark:hover:bg-gray-850/50">
-              <div className="min-w-0">
-                <div className="font-semibold text-gray-900 dark:text-gray-100 truncate">{msg.messageName}</div>
-                <div className="text-gray-500 mt-1">
-                  {t('messages.type')}: {msg.type} • {t('messages.createTime')}: {msg.createTime}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Badge status={statusBadge(msg.status)}>
-                  {msg.status || t('messages.statusUnknown')}
-                </Badge>
-                <Button size="sm" variant="ghost" onClick={() => setDetailTarget(msg)}>{t('messages.detail')}</Button>
-                {isPending(msg) && (
-                  <Button size="sm" variant="primary" onClick={() => { setReplyReason(''); setReplyTarget(msg); }}>
-                    {t('messages.reply')}
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* Reply Modal */}
-      <Modal
-        isOpen={!!replyTarget}
-        onClose={() => setReplyTarget(null)}
-        title={t('messages.replyTitle')}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setReplyTarget(null)}>{t('common.cancel')}</Button>
-            <Button
-              variant="danger"
-              loading={replyMutation.isPending && replyMutation.variables === 'REJECTED'}
-              onClick={() => replyMutation.mutate('REJECTED')}
-            >
-              {t('messages.reject')}
-            </Button>
-            <Button
-              variant="primary"
-              loading={replyMutation.isPending && replyMutation.variables === 'APPROVED'}
-              onClick={() => replyMutation.mutate('APPROVED')}
-            >
-              {t('messages.agree')}
-            </Button>
-          </>
-        }
-      >
-        <div className="text-xs space-y-3">
-          <div className="font-semibold text-gray-800 dark:text-gray-200">{replyTarget?.messageName}</div>
-          <div>
-            <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">{t('messages.reason')}</label>
-            <textarea
-              value={replyReason}
-              onChange={(e) => setReplyReason(e.target.value)}
-              rows={3}
-              className="w-full p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
+      <Card>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
+          <Tabs
+            activeKey={tab}
+            onChange={changeTab}
+            items={[
+              { key: 'process', label: t('msgCenter.tabProcess'), badge: pendingQuery.data || undefined },
+              { key: 'apply', label: t('msgCenter.tabApply') },
+            ]}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <RadioGroup
+              name={t('msgCenter.state')}
+              value={state}
+              onChange={(v) => {
+                setState(v as MessageStateFilter);
+                setPage(1);
+              }}
+              options={[
+                { value: '', label: t('msgCenter.stateAll') },
+                {
+                  value: 'PENDING',
+                  label:
+                    tab === 'process'
+                      ? t('msgCenter.statePendingCount', { count: pendingQuery.data ?? 0 })
+                      : t('msgCenter.statePending'),
+                },
+                { value: 'PROCESSED', label: t('msgCenter.stateProcessed') },
+              ]}
+            />
+            <Select
+              aria-label={t('msgCenter.type')}
+              value={type}
+              onChange={(v) => {
+                setType(v);
+                setPage(1);
+              }}
+              options={typeOptions}
+            />
+            <Input
+              className="w-48"
+              placeholder={t('msgCenter.searchPlaceholder')}
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
             />
           </div>
         </div>
-      </Modal>
 
-      {/* Create Approval Modal */}
-      <CreateApprovalModal
-        isOpen={createOpen}
-        onClose={() => setCreateOpen(false)}
-        defaultInitiatorId={ownerId}
-        onCreated={invalidateMessages}
-      />
+        {!ownerId && <div className="text-xs text-gray-400">{t('msgCenter.noOwner')}</div>}
+        {listQuery.error && (
+          <div className="text-xs text-red-500 mb-2">{t('common.error', { message: listQuery.error.message })}</div>
+        )}
+        {listQuery.isLoading && <div className="text-xs text-gray-400">{t('common.loading')}</div>}
+        {!listQuery.isLoading && messages.length === 0 && ownerId && (
+          <div className="text-xs text-gray-400 text-center py-8">{t('messages.noData')}</div>
+        )}
 
-      {/* Detail Modal */}
-      <Modal
-        isOpen={!!detailTarget}
-        onClose={() => setDetailTarget(null)}
-        title={t('messages.detail')}
-        footer={<Button variant="primary" onClick={() => setDetailTarget(null)}>{t('common.close')}</Button>}
-      >
-        <div className="text-xs space-y-2">
-          <div><span className="text-gray-500">{t('messages.type')}: </span><span className="font-semibold">{detailTarget?.type}</span></div>
-          <div><span className="text-gray-500">{t('messages.createTime')}: </span><span>{detailTarget?.createTime}</span></div>
-          <div>
-            <span className="text-gray-500">{t('common.statusActive')}: </span>
-            <Badge status={statusBadge(detailQuery.data?.status || detailTarget?.status)}>
-              {detailQuery.data?.status || detailTarget?.status || t('messages.statusUnknown')}
-            </Badge>
-          </div>
-          {detailQuery.isLoading && <div className="text-gray-400">{t('common.loading')}</div>}
-        </div>
-      </Modal>
+        <ul className="divide-y divide-gray-100 dark:divide-gray-800">
+          {messages.map((m) => {
+            const parties = m.initiatingTypeMessage?.partyVoteStatuses || [];
+            const showReply = canReplyMessage(m, tab, state);
+            const showEnter = isP2p && canEnterProjectFromMessage(m);
+            const rejectedReasons = parties.filter((p) => p.reason);
+            return (
+              <li key={m.voteID} className="py-3 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300">
+                      {m.type ? t(`msgCenter.types.${m.type}`) : '-'}
+                    </span>
+                    <button
+                      type="button"
+                      className="font-semibold text-gray-900 dark:text-gray-100 hover:text-blue-600 truncate text-left"
+                      onClick={() => setDetail(m)}
+                    >
+                      {titleOf(m)}
+                    </button>
+                    {!(tab === 'process' && state === 'PENDING') && (
+                      <span
+                        className="inline-flex items-center gap-1"
+                        title={
+                          m.status === 'REJECTED' && rejectedReasons.length
+                            ? rejectedReasons
+                                .map((p) => `${p.participantName || p.nodeName}: ${p.reason}`)
+                                .join('\n')
+                            : undefined
+                        }
+                      >
+                        <span className="text-gray-400">
+                          {tab === 'process' ? t('msgCenter.myStatus') : t('msgCenter.currentStatus')}
+                        </span>
+                        <VoteStatusBadge action={m.status} />
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-gray-400 flex flex-wrap gap-x-2">
+                    <span>{m.createTime}</span>
+                    {tab === 'apply' && m.type !== 'NODE_ROUTE' && parties.length > 0 && (
+                      <span>
+                        | {isP2p ? t('msgCenter.partnerInsts') : t('msgCenter.partnerNodes')}:{' '}
+                        {parties
+                          .map(
+                            (p) =>
+                              `${(isP2p ? p.participantName : p.nodeName) || p.participantID || p.nodeID} (${
+                                p.action ? t(`approval.voteStatus.${p.action}`) : '-'
+                              })`,
+                          )
+                          .join('、')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {showEnter && (
+                    <Button size="sm" variant="link" onClick={() => enterProject(m)}>
+                      {t('msgCenter.enterProject')}
+                    </Button>
+                  )}
+                  {showReply && <VoteReplyButtons voteId={m.voteID} participantId={ownerId} onDone={refresh} />}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+
+        {total > PAGE_SIZE && (
+          <Pagination className="mt-3" page={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} />
+        )}
+      </Card>
+
+      {detail && (
+        <MessageDetailDrawer
+          message={detail}
+          tab={tab}
+          ownerId={ownerId}
+          title={titleOf(detail)}
+          onClose={() => setDetail(null)}
+          onReplied={refresh}
+        />
+      )}
     </div>
   );
 };

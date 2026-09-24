@@ -1,7 +1,8 @@
 import React from 'react';
+import { Navigate, useRouterState } from '@tanstack/react-router';
 import type { AccessType } from '@/shared/lib/platform';
-import { useHasAccess, usePlatform } from '@/shared/lib/platform';
-import { useTranslation } from '@/shared/lib/i18n';
+import { useHasAccess, usePlatformContext } from '@/shared/lib/platform';
+import { canAccessPath, resolveHomePath } from '@/shared/lib/access';
 
 export const AccessGuard: React.FC<{ access: AccessType; children: React.ReactNode; fallback?: React.ReactNode }> = ({
   access,
@@ -14,18 +15,16 @@ export const AccessGuard: React.FC<{ access: AccessType; children: React.ReactNo
   return null;
 };
 
+/**
+ * Component-level route guard. The router `beforeLoad` already checks the
+ * persisted user; this re-checks against the live auth store (after user/get
+ * refreshed platformType/ownerType) and redirects to the account's landing page.
+ */
 export const RouteGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { t } = useTranslation();
-  const { platformType } = usePlatform();
-  // For this migration phase all pages are available to CENTER/EDGE/AUTONOMY/P2P.
-  // Center-only management pages can be gated later via AccessGuard.
-  const allowedTypes = ['CENTER', 'EDGE', 'AUTONOMY', 'TEST', 'P2P'];
-  if (allowedTypes.includes(platformType)) {
-    return <>{children}</>;
-  }
-  return (
-    <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
-      {t('access.denied')}
-    </div>
-  );
+  const ctx = usePlatformContext();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  if (canAccessPath(pathname, ctx)) return <>{children}</>;
+  const home = resolveHomePath(ctx);
+  if (home.to === pathname) return <>{children}</>;
+  return <Navigate {...({ to: home.to, params: home.params, search: home.search, replace: true } as React.ComponentProps<typeof Navigate>)} />;
 };

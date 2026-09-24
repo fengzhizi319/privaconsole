@@ -9,7 +9,7 @@
  * 新前端原有 `pages/dag/index.tsx` 中的硬编码 PSI 模板逻辑已全部迁移至此。
  */
 import type { TemplateBuildResult, TemplateContribution, TwoTableTemplateConfig } from '../types';
-import { connect, createPsiNode, createReadDataNode } from '../builder';
+import { connect, createPsiNode, createReadDataNode, createTableStatisticsNode } from '../builder';
 
 export const psiTemplate: TemplateContribution<TwoTableTemplateConfig> = {
   metadata: {
@@ -40,15 +40,25 @@ export const psiTemplate: TemplateContribution<TwoTableTemplateConfig> = {
       senderKey: configs.senderKey || '',
       receiverNodeId: configs.receiverNodeId || '',
       senderNodeId: configs.senderNodeId || '',
+      receiverParties: configs.receiverParties,
       x: -260,
       y: -100,
     });
 
+    // 旧版 pipeline-template-psi：求交后接全表统计（特征来自快速配置）。
+    const statsNode = createTableStatisticsNode(graphId, 4, `${graphId}-node-3-output-0`, {
+      x: -260,
+      y: 20,
+      features: configs.featureSelects?.ss,
+      version: '1.0.0',
+    });
+
     return {
-      nodes: [receiverNode, senderNode, psiNode],
+      nodes: [receiverNode, senderNode, psiNode, statsNode],
       edges: [
         connect(graphId, 1, 0, 3, 0),
         connect(graphId, 2, 0, 3, 1),
+        connect(graphId, 3, 0, 4, 0),
       ],
     };
   },

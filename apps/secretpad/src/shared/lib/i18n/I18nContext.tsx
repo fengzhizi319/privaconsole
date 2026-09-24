@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { Dictionary, Locale } from './dictionaries';
 import { dictionaries } from './dictionaries';
+import { I18nContext } from './use-translation';
 
 const STORAGE_KEY = 'secretpad-locale';
 
@@ -15,13 +16,6 @@ function getInitialLocale(): Locale {
   return 'en-US';
 }
 
-interface I18nContextValue {
-  locale: Locale;
-  setLocale: (locale: Locale) => void;
-  t: (key: string, params?: Record<string, string | number>) => string;
-}
-
-const I18nContext = createContext<I18nContextValue | null>(null);
 
 function getValue(dict: Dictionary, key: string): string | undefined {
   const parts = key.split('.');
@@ -65,12 +59,4 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
       {children}
     </I18nContext.Provider>
   );
-};
-
-export const useTranslation = () => {
-  const ctx = useContext(I18nContext);
-  if (!ctx) {
-    throw new Error('useTranslation must be used within I18nProvider');
-  }
-  return ctx;
 };
