@@ -1,62 +1,56 @@
 import { test, expect } from '@playwright/test';
+import { login, openFromSidebar, useEnglish } from './helpers';
 
 /**
- * P0 critical path: login + landing page smoke test.
+ * P0 critical path: login (cookie session) + landing page smoke test.
  * Requires backend on port 8080 (proxied by Vite) and default dev account.
  */
 test.describe('SecretPad P0 Login & Dashboard', () => {
   test.beforeEach(async ({ page }) => {
-    // Pin locale to English for deterministic label/text matching.
-    await page.context().addInitScript(() => {
-      localStorage.setItem('secretpad-locale', 'en-US');
-    });
+    await useEnglish(page);
   });
 
-  test('logs in with default dev account and lands on dashboard', async ({ page }) => {
-    await page.goto('/');
+  test('logs in with default dev account and opens the dashboard', async ({ page }) => {
+    await login(page);
 
-    // Login page renders
-    await expect(page.locator('h2')).toContainText('SecretPad');
+    // Landing page: Getting Started guide (first login) or dashboard.
+    await expect(page.locator('h1')).toContainText(/Getting Started|Console Dashboard/);
 
-    // Fill credentials
-    await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('12345678');
-    await page.getByRole('button', { name: /Sign In/i }).click();
+    // Sidebar navigation is visible and translated (no raw i18n keys).
+    const sidebar = page.getByRole('link', { name: /Dashboard$/ });
+    await expect(sidebar).toBeVisible();
+    await expect(page.getByRole('link', { name: /Projects$/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: /(^|\s)Nodes$/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Privacy Scenes$/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: /sidebar\./ })).toHaveCount(0);
 
-    // After login, dashboard is visible
+    await openFromSidebar(page, 'Dashboard');
+    await expect(page).toHaveURL(/\/dashboard/);
     await expect(page.locator('h1')).toContainText('Console Dashboard');
-
-    // Sidebar navigation is visible
-    await expect(page.getByRole('link', { name: '📊 Dashboard' })).toBeVisible();
-    await expect(page.getByRole('link', { name: '📁 Projects' })).toBeVisible();
-    await expect(page.getByRole('link', { name: '🖥️ Nodes' })).toBeVisible();
   });
 
   test('navigates to Nodes page after login', async ({ page }) => {
-    await page.goto('/');
-    await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('12345678');
-    await page.getByRole('button', { name: /Sign In/i }).click();
-
-    // Wait for dashboard
-    await expect(page.locator('h1')).toContainText('Console Dashboard');
-
-    // Click Nodes in sidebar
-    await page.getByRole('link', { name: /Nodes/i }).click();
-    await expect(page.locator('h2')).toContainText('Kuscia Node Cluster');
+    await login(page);
+    await openFromSidebar(page, 'Nodes');
+    await expect(page.locator('h2').first()).toContainText('Kuscia Node Cluster');
   });
 
   test('navigates to Messages page after login', async ({ page }) => {
-    await page.goto('/');
-    await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('12345678');
-    await page.getByRole('button', { name: /Sign In/i }).click();
+    await login(page);
+    await openFromSidebar(page, 'Messages');
+    await expect(page.locator('h2')).toContainText('Message & Approval Center');
+  });
 
-    // Wait for dashboard
+  test('keeps the session across a reload and rejects anonymous access after logout', async ({
+    page,
+  }) => {
+    await login(page);
+    await page.goto('/dashboard');
+    await page.reload();
     await expect(page.locator('h1')).toContainText('Console Dashboard');
 
-    // Click Messages in sidebar
-    await page.getByRole('link', { name: /Messages/i }).click();
-    await expect(page.locator('h2')).toContainText('Message & Approval Center');
+    await page.context().clearCookies();
+    await page.goto('/dashboard');
+    await expect(page).toHaveURL(/\/login/);
   });
 });

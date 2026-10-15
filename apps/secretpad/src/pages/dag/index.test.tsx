@@ -17,8 +17,10 @@ import React from 'react';
 
 // ---- 依赖 mock：路由查询参数、API 客户端、重型子特性 -------------------------
 
+const routeSearch = vi.hoisted(() => ({ value: {} as Record<string, string> }));
 vi.mock('@tanstack/react-router', () => ({
-  useSearch: () => ({}),
+  useSearch: () => routeSearch.value,
+  useNavigate: () => vi.fn(),
 }));
 
 const mockApi = vi.hoisted(() => ({
@@ -313,4 +315,25 @@ describe('/dag 页面：节点 ID、自动保存与合并', () => {
     renderPage();
     await waitFor(() => expect(screen.queryAllByText('运行中').length + screen.queryAllByText('Running').length).toBeGreaterThan(0));
   });
+});
+
+
+it('同一路由选择新画布时刷新节点，加载期间不保留上一张图', async () => {
+  routeSearch.value = { projectId: 'p1', graphId: 'g1' };
+  setupApiMock();
+  mockApi.getGraphs.mockResolvedValue([{ graphId: 'g1', name: 'Graph 1' }, { graphId: 'g2', name: 'Graph 2' }]);
+  let resolveNext!: (value: unknown) => void;
+  mockJava.getGraphDetailJava.mockImplementation((_project: string, id: string) => id === 'g1'
+    ? Promise.resolve(normalizeGraphDetail({ nodes: [{ graphNodeId: 'g1-node-1', codeName: 'ml.train/ss_sgd_train', label: 'PreviousCanvas', x: 10, y: 10 }], edges: [] }))
+    : new Promise(resolve => { resolveNext = resolve; }));
+  const { queryClient, rerender } = renderPage();
+  await screen.findByText('PreviousCanvas');
+  routeSearch.value = { projectId: 'p1', graphId: 'g2' };
+  rerender(<QueryClientProvider client={queryClient}><I18nProvider><DAGPage /></I18nProvider></QueryClientProvider>);
+  await waitFor(() => expect(mockJava.getGraphDetailJava).toHaveBeenCalledWith('p1', 'g2'));
+  expect(screen.queryByText('PreviousCanvas')).toBeNull();
+  await act(async () => resolveNext(normalizeGraphDetail({ nodes: [{ graphNodeId: 'g2-node-1', codeName: 'ml.train/ss_sgd_train', label: 'NextCanvas', x: 10, y: 10 }], edges: [] })));
+  await screen.findByText('NextCanvas');
+  expect(screen.queryByText('PreviousCanvas')).toBeNull();
+  routeSearch.value = {};
 });

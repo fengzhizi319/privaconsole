@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Outlet, useRouterState } from '@tanstack/react-router';
 import { AppSidebar } from '../widgets/AppSidebar';
 import { AppHeader } from '../widgets/AppHeader';
@@ -13,6 +13,15 @@ import { GuideTourHost } from '../features/guide-tour';
  */
 export const AppLayout: React.FC = () => {
   const { t } = useTranslation();
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const navigationDialog = useRef<HTMLDialogElement>(null);
+  // Native modal dialogs provide focus trapping, Escape handling and an inert
+  // background. Desktop navigation remains in-flow without a second tab stop.
+  useEffect(() => {
+    const dialog = navigationDialog.current;
+    if (navigationOpen) dialog?.showModal();
+    else dialog?.close();
+  }, [navigationOpen]);
   const { rehydrate, refreshUser } = useAuthStore();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
@@ -38,6 +47,8 @@ export const AppLayout: React.FC = () => {
         return t('dataSources.title');
       case '/data-sources/detail':
         return t('dataSources.detailTitle');
+      case '/dag-templates':
+        return t('sidebar.predefinedCanvases');
       case '/dag':
         return t('sidebar.dag');
       case '/models':
@@ -90,11 +101,16 @@ export const AppLayout: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans">
-      <AppSidebar />
+    <div className="app-shell flex h-dvh w-full overflow-hidden text-gray-900 dark:text-gray-100 font-sans">
+      <a href="#main-content" className="skip-link">{t('header.skipContent')}</a>
+      <div className="hidden lg:block"><AppSidebar /></div>
+      <dialog ref={navigationDialog} aria-label={t('header.navigation')} className="navigation-dialog" onCancel={() => setNavigationOpen(false)} onClick={(event) => { if (event.target === event.currentTarget) setNavigationOpen(false); }}>
+        <button type="button" className="absolute right-3 top-3 z-10 rounded-lg p-2 text-slate-300 hover:bg-white/10" aria-label={t('header.closeNavigation')} onClick={() => setNavigationOpen(false)}>✕</button>
+        <AppSidebar onNavigate={() => setNavigationOpen(false)} />
+      </dialog>
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <AppHeader title={getTitle()} />
-        <main className="flex-1 overflow-y-auto p-6">
+        <AppHeader title={getTitle()} onOpenNavigation={() => setNavigationOpen(true)} />
+        <main id="main-content" tabIndex={-1} className="app-content flex-1 overflow-auto p-4 sm:p-6 lg:p-8 focus:outline-none">
           <RouteGuard>
             <Outlet />
           </RouteGuard>

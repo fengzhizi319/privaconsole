@@ -1,3 +1,7 @@
+import { QueryFeedback } from '../../shared/ui/query-feedback';
+import { FilterBar } from '../../shared/ui/filter-bar';
+import { RowActions } from '../../shared/ui/row-actions';
+import { TableView } from '../../shared/ui/table-view';
 /**
  * 结果管理列表部分（legacy result-manager.view）：
  * - node/result/list 服务端分页；名称搜索、类型筛选、时间排序；
@@ -246,7 +250,7 @@ export const ResultList: React.FC<{ onOpenDetail: (result: NodeAllResultsVO) => 
 
   return (
     <Card data-tour="results-list">
-      <div className="flex flex-col md:flex-row md:items-center gap-3 mb-3">
+      <FilterBar onReset={()=>{setSearch('');setKinds([]);setInstFilter([]);setPage(1);}}>
         {needsPicker && (
           <Select
             className="md:!w-48"
@@ -265,7 +269,7 @@ export const ResultList: React.FC<{ onOpenDetail: (result: NodeAllResultsVO) => 
             { value: 'ascending', label: t('results.sortAsc') },
           ]}
         />
-      </div>
+      </FilterBar>
       <div className="flex flex-wrap items-center gap-3 mb-3 text-xs">
         <span className="text-gray-500">{t('results.kindHeader')}:</span>
         <CheckboxGroup value={kinds} onChange={setKinds} options={KINDS.map((k) => ({ value: k, label: t(`results.kind.${k}`) }))} />
@@ -296,10 +300,10 @@ export const ResultList: React.FC<{ onOpenDetail: (result: NodeAllResultsVO) => 
         </div>
       )}
 
-      {listQuery.error && <div className="text-xs text-rose-500 mb-2">{errorText(listQuery.error)}</div>}
+      {listQuery.error && <QueryFeedback error={listQuery.error} onRetry={()=>void listQuery.refetch()}/>}
 
       <div className="overflow-x-auto">
-        <table className="w-full text-xs border-collapse">
+        <TableView id="results"><table className="w-full text-xs border-collapse">
           <thead>
             <tr className="border-b border-gray-200 dark:border-gray-700 text-left text-gray-500">
               <th className="py-2 px-3 w-8">
@@ -319,14 +323,14 @@ export const ResultList: React.FC<{ onOpenDetail: (result: NodeAllResultsVO) => 
             {listQuery.isLoading && (
               <tr>
                 <td colSpan={cols} className="py-8 text-center text-gray-400">
-                  {t('common.loading')}
+                  <QueryFeedback loading/>
                 </td>
               </tr>
             )}
-            {!listQuery.isLoading && rows.length === 0 && (
+            {!listQuery.isLoading && !listQuery.error && rows.length === 0 && (
               <tr>
                 <td colSpan={cols} className="py-8 text-center text-gray-400">
-                  {t('results.noData')}
+                  <QueryFeedback empty label={t('results.noData')}/>
                 </td>
               </tr>
             )}
@@ -362,13 +366,13 @@ export const ResultList: React.FC<{ onOpenDetail: (result: NodeAllResultsVO) => 
                   )}
                   <td className="py-2 px-3">{formatTime(r.gmtCreate)}</td>
                   <td className="py-2 px-3">
-                    <div className="flex items-center justify-end gap-2">{renderActions(r)}</div>
+                    <RowActions>{renderActions(r)}</RowActions>
                   </td>
                 </tr>
               );
             })}
           </tbody>
-        </table>
+        </table></TableView>
       </div>
       <div className="flex items-center justify-end gap-3 mt-3">
         <Select

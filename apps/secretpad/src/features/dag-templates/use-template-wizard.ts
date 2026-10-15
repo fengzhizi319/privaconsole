@@ -24,11 +24,14 @@ import {
   isSingleTableTemplate,
   isTwoTableTemplate,
   needsFeatureColumns,
+  needsLabelColumn,
   needsNoInputs,
   needsPredictionName,
   templateByKey,
   templatesByCategory,
 } from './registry';
+import { mergeTableColumns } from './columns';
+import { isModelingKey } from './templates/modeling';
 import { useTranslation } from '../../shared/lib/i18n';
 
 export interface TemplateWizardFormState {
@@ -168,7 +171,7 @@ export function useTemplateWizard(project: Project | undefined, onCreated: (grap
 
   const allColumns = useMemo(() => {
     if (isTwoTableTemplate(selectedTemplate)) {
-      return receiverTable?.columns || senderTable?.columns || [];
+      return mergeTableColumns(receiverTable?.columns, senderTable?.columns);
     }
     if (isSingleTableTemplate(selectedTemplate)) {
       return singleTable?.columns || [];
@@ -208,14 +211,18 @@ export function useTemplateWizard(project: Project | undefined, onCreated: (grap
   useEffect(() => {
     if (!isOpen || !needsFeatureColumns(selectedTemplate)) return;
     const numericCols = allColumns.filter((c) => c.type === 'float' || c.type === 'double' || c.type === 'int' || c.type === 'integer' || c.type === 'long').map((c) => c.name);
-    const candidates = numericCols.length > 0 ? numericCols : allColumns.map((c) => c.name);
+    const candidates = (numericCols.length > 0 ? numericCols : allColumns.map((c) => c.name))
+      .filter(c => c !== form.labelColumn && c !== form.receiverKey && c !== form.senderKey);
     if (form.featureColumns.length === 0 && candidates.length > 0) {
       setForm((prev) => ({ ...prev, featureColumns: candidates }));
     }
-  }, [isOpen, selectedTemplate, selectedTemplate.metadata.key, allColumns, form.featureColumns.length]);
+  }, [isOpen, selectedTemplate, selectedTemplate.metadata.key, allColumns, form.featureColumns.length, form.labelColumn, form.receiverKey, form.senderKey]);
 
   const setField = useCallback(<K extends keyof TemplateWizardFormState>(field: K, value: TemplateWizardFormState[K]) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => ({ ...prev, [field]: value,
+      ...(field === 'labelColumn' || field === 'receiverKey' || field === 'senderKey'
+        ? { featureColumns: prev.featureColumns.filter(c => c !== value) } : {}),
+    }));
   }, []);
 
   const selectTemplate = useCallback((key: string) => {
@@ -250,6 +257,11 @@ export function useTemplateWizard(project: Project | undefined, onCreated: (grap
         base.featureSelects = { ss: form.featureColumns };
         base.labelSelects = { s: form.labelColumn };
       }
+      if (isModelingKey(selectedTemplate.metadata.key) && needsLabelColumn(selectedTemplate)) {
+        // save_label may only reveal columns already owned by the receiver.
+        base.predictReceiver = receiverTable?.columns?.some(c => c.name === form.labelColumn)
+          ? form.receiverNodeId : form.senderNodeId;
+      }
       if (needsPredictionName(selectedTemplate)) {
         base.pred = { s: form.predictionName || 'pred' };
       }
@@ -271,7 +283,7 @@ export function useTemplateWizard(project: Project | undefined, onCreated: (grap
       }
     }
     return base;
-  }, [form, selectedTemplate]);
+  }, [form, selectedTemplate, receiverTable]);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -309,9 +321,12 @@ export function useTemplateWizard(project: Project | undefined, onCreated: (grap
     if (needsNoInputs(selectedTemplate)) return true;
     if (isTwoTableTemplate(selectedTemplate)) {
       if (!form.receiverNodeId || !form.receiverTableId || !form.receiverKey) return false;
+      if (isModelingKey(selectedTemplate.metadata.key) && form.receiverNodeId === form.senderNodeId) return false;
       if (!form.senderNodeId || !form.senderTableId || !form.senderKey) return false;
       if (needsFeatureColumns(selectedTemplate)) {
-        if (form.featureColumns.length === 0 || !form.labelColumn) return false;
+        if (form.featureColumns.length === 0) return false;
+        if (needsLabelColumn(selectedTemplate) && !form.labelColumn) return false;
+        if (form.featureColumns.includes(form.labelColumn)) return false;
       }
       return true;
     }

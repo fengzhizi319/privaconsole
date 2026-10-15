@@ -186,6 +186,9 @@ export interface DAGCanvasLabels {
   deleteNode?: string;
   emptyCanvas?: string;
   advancedConfig?: string;
+  configIssues?: string;
+  validateConfig?: string;
+  configValid?: string;
   noAttrs?: string;
   optional?: string;
   required?: string;
@@ -1262,8 +1265,8 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
         <div className="flex-1 overflow-y-auto p-2 space-y-4 text-xs" data-tour="dag-palette">
           {filteredGroups.map(([group, items]) => (
             <div key={group}>
-              <div
-                className="px-2 py-1 text-gray-500 font-semibold uppercase text-[10px] cursor-pointer hover:text-gray-300 flex items-center justify-between select-none"
+              <button type="button" aria-expanded={!!paletteFilter || !collapsedGroups.has(group)}
+                className="w-full px-2 py-1 text-gray-400 font-semibold uppercase text-[10px] cursor-pointer hover:text-gray-300 flex items-center justify-between select-none"
                 onClick={() =>
                   setCollapsedGroups((prev) => {
                     const next = new Set(prev);
@@ -1275,10 +1278,10 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
               >
                 <span>{group}</span>
                 <span className="text-gray-600">
-                  {collapsedGroups.has(group) ? '▶' : '▼'} {items.length}
+                  {!paletteFilter && collapsedGroups.has(group) ? '▶' : '▼'} {items.length}
                 </span>
-              </div>
-              {!collapsedGroups.has(group) &&
+              </button>
+              {(!!paletteFilter || !collapsedGroups.has(group)) &&
                 items.map((component, idx) => {
                   const codeName = `${component.domain}/${component.name}`;
                   const label = formatReactChild(i18nMap[component.name] || i18nMap[codeName] || component.name, component.name);
@@ -1852,6 +1855,7 @@ export const DAGNextWorkspace: React.FC<DAGCanvasProps> = ({
                             translate={translateFn}
                             onOpenModification={() => handleTabChange('binning')}
                             labels={{
+                              issues: labels.configIssues, validate: labels.validateConfig, valid: labels.configValid,
                               advanced: labels.advancedConfig ?? 'Advanced Config',
                               noAttrs: labels.noAttrs,
                               optional: labels.optional,

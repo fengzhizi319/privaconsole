@@ -1,4 +1,5 @@
 import React from 'react';
+import { useDialogFocus } from './use-dialog-focus';
 
 /**
  * SecretPad 设计系统基础组件库。
@@ -129,7 +130,7 @@ export const Card: React.FC<CardProps> = ({
   return (
     <div
       onClick={onClick}
-      className={`bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xs overflow-hidden ${className}`}
+      className={`bg-surface-card text-fg-primary border border-line-base rounded-xl shadow-card overflow-hidden ${className}`}
       {...rest}
     >
       {(title || extra) && (
@@ -168,15 +169,19 @@ export const Modal: React.FC<ModalProps> = ({
   footer,
   width = 'max-w-lg'
 }) => {
+  const dialogId = React.useId();
+  const dialogRef = useDialogFocus(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-fadeIn">
-      <div className={`w-full ${width} bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-xl overflow-hidden`}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={title ? dialogId : undefined} aria-label={title ? undefined : 'Dialog'} tabIndex={-1} className={`w-full ${width} max-h-[calc(100dvh-2rem)] flex flex-col bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-xl overflow-hidden`}>
         {title && (
-          <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-            <h3 className="font-semibold text-lg text-gray-900 dark:text-gray-100">{title}</h3>
+          <div className="px-6 py-4 shrink-0 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+            <h3 id={dialogId} className="font-semibold text-lg text-gray-900 dark:text-gray-100">{title}</h3>
             <button
+              type="button"
+              aria-label="close"
               onClick={onClose}
               className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
             >
@@ -184,9 +189,10 @@ export const Modal: React.FC<ModalProps> = ({
             </button>
           </div>
         )}
-        <div className="p-6">{children}</div>
+        {/* Only the body scrolls: long template forms must keep submit/close reachable. */}
+        <div className="p-6 min-h-0 overflow-y-auto">{children}</div>
         {footer && (
-          <div className="px-6 py-4 bg-gray-50 dark:bg-gray-850 border-t border-gray-100 dark:border-gray-800 flex justify-end gap-3">
+          <div className="px-6 py-4 shrink-0 bg-gray-50 dark:bg-gray-850 border-t border-gray-100 dark:border-gray-800 flex justify-end gap-3">
             {footer}
           </div>
         )}

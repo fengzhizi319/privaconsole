@@ -207,6 +207,10 @@ export async function listScheduledJobsJava(req: {
   projectId: string;
   graphId: string;
   scheduleTaskId?: string;
+  searchKey?: string;
+  status?: string;
+  startTime?: string;
+  endTime?: string;
   pageNum: number;
   pageSize: number;
 }): Promise<JavaPage<ProjectJobSummaryVOJava>> {

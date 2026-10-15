@@ -1,4 +1,5 @@
 import React from 'react';
+import { useDialogFocus } from './use-dialog-focus';
 
 /**
  * Form & layout primitives used by the migrated business pages
@@ -6,7 +7,7 @@ import React from 'react';
  */
 
 const fieldBase =
-  'w-full px-3 py-1.5 text-sm rounded-lg bg-white dark:bg-gray-800 border text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors';
+  'w-full px-3 py-1.5 text-sm rounded-lg bg-surface-input border text-fg-primary placeholder:text-gray-400 focus:outline-none focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors';
 
 function borderClass(invalid?: boolean) {
   return invalid ? 'border-rose-400 dark:border-rose-600' : 'border-gray-200 dark:border-gray-700';
@@ -207,17 +208,24 @@ export interface DrawerProps {
 }
 
 export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children, footer, width = 'max-w-xl' }) => {
+  const dialogId = React.useId();
+  const dialogRef = useDialogFocus(isOpen, onClose);
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
       <div
+        ref={dialogRef}
         role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? dialogId : undefined}
+        aria-label={title ? undefined : 'Dialog'}
+        tabIndex={-1}
         className={`w-full ${width} h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-xl flex flex-col`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-3.5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-          <h3 className="font-semibold text-base text-gray-900 dark:text-gray-100">{title}</h3>
-          <button onClick={onClose} aria-label="close" className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+          <h3 id={dialogId} className="font-semibold text-base text-gray-900 dark:text-gray-100">{title}</h3>
+          <button type="button" onClick={onClose} aria-label="close" className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
             ✕
           </button>
         </div>

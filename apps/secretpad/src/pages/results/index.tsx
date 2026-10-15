@@ -16,7 +16,7 @@
  */
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Button, Modal } from '@secretpad/design-system';
+import { Button, Drawer } from '@secretpad/design-system';
 import type { NodeAllResultsVO } from '@secretpad/api-client';
 import { apiClient } from '@secretpad/api-client';
 import { useTranslation } from '../../shared/lib/i18n';
@@ -59,7 +59,7 @@ export const ResultsPage: React.FC = () => {
 
       <ResultList onOpenDetail={openDetail} />
 
-      <Modal
+      <Drawer
         isOpen={isDetailOpen}
         onClose={closeDetail}
         title={t('results.detailTitle')}
@@ -75,9 +75,9 @@ export const ResultsPage: React.FC = () => {
           {detailQuery.error && (
             <div className="text-red-500">{t('common.error', { message: String(detailQuery.error.message) })}</div>
           )}
-          {detailQuery.data && <ResultDetailView detail={detailQuery.data} result={detailResult} />}
+          {detailQuery.data && <ResultDetailView key={detailResult?.nodeResultsVO?.domainDataId} detail={detailQuery.data} result={detailResult} />}
         </div>
-      </Modal>
+      </Drawer>
     </div>
   );
 };

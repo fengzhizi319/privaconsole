@@ -1,13 +1,14 @@
+import { StatusBadge } from '../../shared/ui/status-badge';
 import React from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQuery, useQueries } from '@tanstack/react-query';
-import { Card, Badge, Button } from '@secretpad/design-system';
+import { Card, Button } from '@secretpad/design-system';
 import { apiClient, countNodeResultsJava } from '@secretpad/api-client';
 import { useTranslation } from '../../shared/lib/i18n';
 import { useState } from 'react';
 import { usePlatform } from '../../shared/lib/platform';
 import { GuideNodeCard } from './guide-node-card';
-import { NODE_STATUS, normalizeStatus, statusBadge } from '@secretpad/dag-next';
+import { NODE_STATUS, normalizeStatus } from '@secretpad/dag-next';
 
 /** localStorage 中引导 banner 被关闭的标记键名。 */
 const GUIDE_BANNER_DISMISSED_KEY = 'secretpad-guide-banner-dismissed';
@@ -139,7 +140,17 @@ export const DashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* Stat Cards Grid */}
+      <section className="grid gap-4 lg:grid-cols-2">
+        <Card title={t('display.priorities')} extra={<Button size="sm" variant="link" onClick={()=>navigate({to:'/job-records'})}>{t('dashboard.jobs')}</Button>}>
+          {jobsQuery.isLoading ? <p className="text-sm text-gray-500">{t('common.loading')}</p> : jobs.filter(job=>['FAILED','RUNNING'].includes(normalizeStatus(job.status)||'')).slice(0,5).map(job=><button key={job.jobId} type="button" onClick={()=>navigate({to:'/job-records'})} className="flex w-full items-center justify-between gap-3 border-b border-gray-100 py-3 text-left text-sm dark:border-gray-800"><span className="truncate">{job.name||job.jobId}</span><StatusBadge value={job.status}/></button>)}
+          {!jobsQuery.isLoading && !jobs.some(job=>['FAILED','RUNNING'].includes(normalizeStatus(job.status)||'')) && <p className="py-4 text-sm text-gray-500">{t('common.empty')}</p>}
+        </Card>
+        <Card title={t('display.recentProjects')} extra={<Button size="sm" variant="link" onClick={()=>navigate({to:'/projects'})}>{t('sidebar.projects')}</Button>}>
+          {projects.slice(0,5).map(project=><button key={project.projectId} type="button" onClick={()=>navigate({to:'/dag',search:{projectId:project.projectId}})} className="flex w-full items-center justify-between gap-3 border-b border-gray-100 py-3 text-left text-sm dark:border-gray-800"><span className="truncate">{project.projectName}</span><StatusBadge value={project.status}/></button>)}
+          {!projects.length && <p className="py-4 text-sm text-gray-500">{t(projectsQuery.isLoading?'common.loading':'common.empty')}</p>}
+        </Card>
+      </section>
+      <details className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><summary className="cursor-pointer text-sm font-semibold">{t('display.overview')}</summary><div className="mt-4">      {/* Stat Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <Card className="hover:border-blue-500/50 transition-all cursor-pointer" bodyClassName="p-4">
           <div className="flex items-center justify-between text-xs text-gray-500 font-medium">
@@ -206,6 +217,7 @@ export const DashboardPage: React.FC = () => {
         </Card>
       </div>
 
+</div></details>
       {/* Main Content Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Recent Jobs & Project List */}
@@ -223,18 +235,16 @@ export const DashboardPage: React.FC = () => {
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs ${
                       normalizeStatus(job.status) === NODE_STATUS.RUNNING ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 animate-spin' :
-                      normalizeStatus(job.status) === NODE_STATUS.SUCCEED ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50' : 'bg-gray-100'
+                      normalizeStatus(job.status) === NODE_STATUS.SUCCEED ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50' : normalizeStatus(job.status) === NODE_STATUS.FAILED ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/50' : 'bg-gray-100'
                     }`}>
-                      {normalizeStatus(job.status) === NODE_STATUS.RUNNING ? '🔄' : '✓'}
+                      {normalizeStatus(job.status) === NODE_STATUS.RUNNING ? '↻' : normalizeStatus(job.status) === NODE_STATUS.SUCCEED ? '✓' : normalizeStatus(job.status) === NODE_STATUS.FAILED ? '×' : '•'}
                     </div>
                     <div>
                       <div className="font-semibold text-sm text-gray-800 dark:text-gray-200">{job.name}</div>
                       <div className="text-xs text-gray-400 font-mono">Job ID: {job.jobId} • {t('common.duration') || 'Duration'}: {job.duration || '-'}</div>
                     </div>
                   </div>
-                  <Badge status={statusBadge(job.status)}>
-                    {job.status}
-                  </Badge>
+                  <StatusBadge value={job.status}/>
                 </div>
               ))}
             </div>
@@ -248,7 +258,7 @@ export const DashboardPage: React.FC = () => {
               {projects.length === 0 && (
                 <div className="text-xs text-gray-400 text-center py-4">{t('projects.noProjects')}</div>
               )}
-              {projects.map((proj) => (
+              {projects.slice(0,6).map((proj) => (
                 <div
                   key={proj.projectId}
                   onClick={() => navigate({ to: '/projects' })}

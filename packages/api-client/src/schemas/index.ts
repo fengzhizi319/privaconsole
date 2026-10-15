@@ -267,8 +267,10 @@ export const GraphNodeDetailSchema = z.object({
   x: z.number().optional(),
   y: z.number().optional(),
   progress: z.number().optional(),
-  inputs: z.array(z.string()).optional(),
-  outputs: z.array(z.string()).optional(),
+  // Go nil slices encode as null (not just []); keep a stable array for DAG
+  // consumers while still rejecting malformed scalar/element types.
+  inputs: z.array(z.string()).nullish().transform(value => value ?? []),
+  outputs: z.array(z.string()).nullish().transform(value => value ?? []),
   nodeDef: z.record(z.any()).optional(),
   parties: z.array(z.record(z.any())).optional(),
   results: z.array(z.record(z.any())).optional(),
@@ -281,8 +283,8 @@ export const GraphNodeInfoSchema = z.object({
   label: z.string().optional(),
   x: z.number().optional(),
   y: z.number().optional(),
-  inputs: z.array(z.string()).optional(),
-  outputs: z.array(z.string()).optional(),
+  inputs: z.array(z.string()).nullish().transform(value => value ?? []),
+  outputs: z.array(z.string()).nullish().transform(value => value ?? []),
   nodeDef: z.record(z.any()).optional(),
 });
 export type GraphNodeInfo = z.infer<typeof GraphNodeInfoSchema>;
@@ -338,7 +340,9 @@ export type GraphNodeTaskLogsVO = z.infer<typeof GraphNodeTaskLogsVOSchema>;
 export const GraphNodeOutputVOSchema = z.object({
   type: z.string().optional(),
   codeName: z.string().optional(),
-  tabs: z.record(z.any()).optional(),
+  // sf.report sends an array of tabs; older graph outputs wrap the tabs in
+  // an object. The report renderer already understands both wire formats.
+  tabs: z.union([z.record(z.any()), z.array(z.record(z.any()))]).nullish(),
   meta: z.record(z.any()).optional(),
   jobId: z.string().optional(),
   taskId: z.string().optional(),

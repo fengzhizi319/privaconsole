@@ -31,3 +31,16 @@ describe('project list logic', () => {
     expect(projectPermissions({ isCenter: false, isCenterAdmin: false, isAutonomy: false })).toEqual({ canCreate: false, canManage: false });
   });
 });
+
+it('searches IDs, descriptions and participants and groups explicit metadata only', async () => {
+  const { groupProjects } = await import('./project-list.logic');
+  const items = [
+    { projectName: 'TEE-named MPC project', projectId: 'alpha', description: 'medical', computeMode: 'mpc', status: 'ACTIVE', nodes: [{nodeId:'alice',nodeName:'Hospital'}] },
+    { projectName: 'Other', projectId: 'beta', computeMode: 'TEE', status: 'ARCHIVED' },
+  ];
+  for (const query of ['alpha','medical','alice','Hospital']) expect(filterProjects(items,query,'ALL')).toEqual([items[0]]);
+  expect(groupProjects(items,'mode').map(group=>[group.key,group.projects.length])).toEqual([['MPC',1],['TEE',1]]);
+  expect(groupProjects(items,'status').map(group=>group.key)).toEqual(['ACTIVE','ARCHIVED']);
+  expect(groupProjects([{}],'status')[0].key).toBe('UNKNOWN');
+  expect(groupProjects([],'mode')).toEqual([]);
+});

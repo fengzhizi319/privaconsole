@@ -1,3 +1,7 @@
+import { QueryFeedback } from '../../shared/ui/query-feedback';
+import { FilterBar } from '../../shared/ui/filter-bar';
+import { StatusBadge } from '../../shared/ui/status-badge';
+import { TableView } from '../../shared/ui/table-view';
 /**
  * DAG / Pipeline 运行记录页（旧版 pipeline-record-list + dag-record）。
  *
@@ -10,10 +14,10 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, Button, Badge, toast } from '@secretpad/design-system';
+import { Card, Button, toast } from '@secretpad/design-system';
 import type { ProjectJobSummaryVOJava } from '@secretpad/api-client';
 import { apiClient, listGraphJobsJava, listScheduledJobsJava, pageScheduledJava, pageScheduledTasksJava, stopProjectJobJava } from '@secretpad/api-client';
-import { NODE_STATUS, formatTimestamp, normalizeStatus, statusBadge } from '@secretpad/dag-next';
+import { NODE_STATUS, formatTimestamp, normalizeStatus } from '@secretpad/dag-next';
 import { useTranslation } from '../../shared/lib/i18n';
 import { AccessGuard } from '../../features/auth/ui/access-guard';
 import { Platform } from '../../shared/lib/platform';
@@ -42,7 +46,17 @@ export const JobRecordsPage: React.FC = () => {
   const [scheduleTaskId, setScheduleTaskId] = useState('');
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [searchKey, setSearchKey] = useState('');
+  const [status, setStatus] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  useEffect(() => { const timer=setTimeout(()=>{setSearchKey(search.trim());setPage(1);},300);return ()=>clearTimeout(timer); },[search]);
+  const invalidDates = !!startTime && !!endTime && endTime < startTime;
+  const filters = {searchKey,status,startTime:startTime ? new Date(startTime).toISOString() : undefined,endTime:endTime ? new Date(endTime).toISOString() : undefined};
+
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  useEffect(() => {setSelected(new Set());}, [projectId,graphId,mode,scheduleTaskId,page,searchKey,status,startTime,endTime]);
+
   const [detail, setDetail] = useState<ProjectJobSummaryVOJava | null>(null);
 
   const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: () => apiClient.getProjects() });
@@ -65,12 +79,12 @@ export const JobRecordsPage: React.FC = () => {
   });
 
   const recordsQuery = useQuery({
-    queryKey: ['job-records', projectId, graphId, mode, scheduleTaskId, page],
+    queryKey: ['job-records', projectId, graphId, mode, scheduleTaskId, page, searchKey, status, startTime, endTime],
     queryFn: () =>
       mode === 'periodic'
-        ? listScheduledJobsJava({ projectId, graphId, scheduleTaskId, pageNum: page, pageSize: PAGE_SIZE })
-        : listGraphJobsJava({ projectId, graphId: graphId || undefined, pageNum: page, pageSize: PAGE_SIZE }),
-    enabled: !!projectId && (mode === 'normal' || !!scheduleTaskId),
+        ? listScheduledJobsJava({ projectId, graphId, scheduleTaskId, pageNum: page, pageSize: PAGE_SIZE, ...filters })
+        : listGraphJobsJava({ projectId, graphId: graphId || undefined, pageNum: page, pageSize: PAGE_SIZE, ...filters }),
+    enabled: !!projectId && !invalidDates && (mode === 'normal' || !!scheduleTaskId),
     refetchInterval: (q) => ((q.state.data as { list: ProjectJobSummaryVOJava[] } | undefined)?.list || []).some((j) => normalizeStatus(j.status) === NODE_STATUS.RUNNING) ? 5000 : false,
   });
 
@@ -86,12 +100,7 @@ export const JobRecordsPage: React.FC = () => {
     onError: (e) => toast.error(t('jobRecords.stopError', { message: e instanceof Error ? e.message : String(e) })),
   });
 
-  const list = useMemo(() => {
-    const all = recordsQuery.data?.list ?? [];
-    const q = search.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter((j) => (j.jobId || '').toLowerCase().includes(q) || String((j as { graph?: { name?: string } }).graph?.name || j.name || '').toLowerCase().includes(q));
-  }, [recordsQuery.data, search]);
+  const list = recordsQuery.data?.list ?? [];
   const total = recordsQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const running = list.filter((j) => normalizeStatus(j.status) === NODE_STATUS.RUNNING);
@@ -99,12 +108,12 @@ export const JobRecordsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
+      <div className="flex flex-col gap-4 bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
         <div>
           <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('jobRecords.title')}</h2>
           <p className="text-xs text-gray-500">{t('jobRecords.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+      <FilterBar onReset={()=>{setSearch('');setSearchKey('');setStatus('');setStartTime('');setEndTime('');setPage(1);}}>
           <select aria-label={t('jobRecords.project')} className={selectCls} value={projectId} onChange={(e) => { setProjectId(e.target.value); setGraphId(''); setScheduleId(''); setScheduleTaskId(''); setPage(1); }}>
             {projects.map((p) => (
               <option key={p.projectId} value={p.projectId}>
@@ -152,10 +161,16 @@ export const JobRecordsPage: React.FC = () => {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            aria-label={t('display.search')}
             placeholder={t('jobRecords.searchPlaceholder')}
             className={selectCls}
           />
-          <Button variant="outline" onClick={() => void recordsQuery.refetch()} loading={recordsQuery.isFetching}>
+          <select aria-label={t('display.statusFilter')} value={status} onChange={event=>{setStatus(event.target.value);setPage(1);}} className={selectCls}>
+            <option value="">{t('display.allStatus')}</option>{['RUNNING','SUCCESS','FAILED','STOPPED','STAGING'].map(value=><option key={value} value={value}>{t(`display.status.${value}`)}</option>)}
+          </select>
+          <label className="text-xs text-gray-500">{t('display.startTime')} <input aria-label={t('display.startTime')} type="datetime-local" value={startTime} onChange={event=>{setStartTime(event.target.value);setPage(1);}} className={selectCls}/></label>
+          <label className="text-xs text-gray-500">{t('display.endTime')} <input aria-label={t('display.endTime')} type="datetime-local" value={endTime} onChange={event=>{setEndTime(event.target.value);setPage(1);}} className={selectCls}/></label>
+          <Button variant="outline" disabled={invalidDates} onClick={() => void recordsQuery.refetch()} loading={recordsQuery.isFetching}>
             {t('common.refresh')}
           </Button>
           <AccessGuard access={{ types: [Platform.CENTER, Platform.AUTONOMY, Platform.P2P] }}>
@@ -163,17 +178,14 @@ export const JobRecordsPage: React.FC = () => {
               {t('jobRecords.stop')} ({selected.size})
             </Button>
           </AccessGuard>
-        </div>
+        </FilterBar>
       </div>
 
-      {recordsQuery.error && (
-        <div className="text-xs text-red-500 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg px-4 py-2">
-          {t('common.error', { message: (recordsQuery.error as Error).message })}
-        </div>
-      )}
+      {invalidDates && <p role="alert" className="text-sm text-rose-600">{t('display.dateError')}</p>}
+      <QueryFeedback error={recordsQuery.error} onRetry={()=>void recordsQuery.refetch()}/>
 
       <Card bodyClassName="p-0">
-        <table className="w-full text-left text-xs">
+        <TableView id="job-records"><table className="w-full text-left text-xs">
           <thead className="bg-gray-50 dark:bg-gray-850 text-gray-500 font-semibold uppercase border-b border-gray-200 dark:border-gray-800">
             <tr>
               <th className="p-4 w-8">
@@ -196,14 +208,14 @@ export const JobRecordsPage: React.FC = () => {
             {recordsQuery.isLoading && (
               <tr>
                 <td colSpan={7} className="p-4 text-center text-gray-400">
-                  {t('common.loading')}
+                  <QueryFeedback loading/>
                 </td>
               </tr>
             )}
-            {!recordsQuery.isLoading && list.length === 0 && (
+            {!recordsQuery.isLoading && !recordsQuery.error && list.length === 0 && (
               <tr>
                 <td colSpan={7} className="p-4 text-center text-gray-400">
-                  {t('jobRecords.noData')}
+                  <QueryFeedback empty label={t('jobRecords.noData')}/>
                 </td>
               </tr>
             )}
@@ -232,12 +244,12 @@ export const JobRecordsPage: React.FC = () => {
                   <td className="p-4 font-semibold text-gray-800 dark:text-gray-200">
                     <button type="button" className="text-left hover:text-blue-600" onClick={() => setDetail(job)}>
                       <div>{graphName || job.name || job.jobId}</div>
-                      <div className="font-mono text-[10px] text-gray-400">{job.jobId}</div>
+                      <div className="font-mono text-[10px] text-gray-400 truncate max-w-64" title={job.jobId}>{job.jobId}</div>
                     </button>
-                    {job.errMsg && <div className="text-red-500 text-[10px] break-all">{job.errMsg}</div>}
+                    {job.errMsg && <div title={job.errMsg} className="text-red-500 text-xs truncate max-w-72">{job.errMsg}</div>}
                   </td>
                   <td className="p-4">
-                    <Badge status={statusBadge(job.status)}>{st ?? job.status}</Badge>
+                    <StatusBadge value={job.status} />
                   </td>
                   <td className="p-4 text-gray-500">
                     {job.finishedTaskCount ?? 0}/{job.taskCount ?? 0}
@@ -262,7 +274,7 @@ export const JobRecordsPage: React.FC = () => {
               );
             })}
           </tbody>
-        </table>
+        </table></TableView>
         {totalPages > 1 && (
           <div className="flex items-center justify-end gap-2 p-3 text-xs">
             <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>

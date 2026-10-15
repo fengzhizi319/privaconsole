@@ -203,6 +203,12 @@ describe('apiClient graph operations', () => {
     expect(output.type).toBe('table');
   });
 
+  it('maps the ordered Java/Go component batch into lookup keys', async () => {
+    mockPost.mockResolvedValueOnce({ data: { status: { code: 0 }, data: [{ domain: 'read_data', name: 'datatable' }] }, response: new Response() } as any);
+    const defs = await apiClient.batchGetComponent([{ domain: 'read_data', name: 'datatable' }]);
+    expect(defs['read_data/datatable'].name).toBe('datatable');
+  });
+
   it('batch fetches component definitions', async () => {
     mockPost.mockResolvedValueOnce({
       data: { status: { code: 0 }, data: { 'read_data/datatable': { name: 'read_data' } } },
@@ -363,4 +369,32 @@ describe('newly migrated endpoints (project/scheduled/user/node/graph/model/misc
     );
     expect(res).toBeDefined();
   });
+});
+
+// Java and Go void commands omit data (or return null). Success must not be
+// mistaken for a transport error after a destructive action has already run.
+describe('migration: void commands', () => {
+  const commands = [
+    ['node/delete', () => apiClient.deleteNode('alice')],
+    ['datasource/delete', () => apiClient.deleteDataSource('alice', 'ds', 'LOCAL')],
+    ['datatable/delete', () => apiClient.deleteDataTable({ nodeId: 'alice', datatableId: 'dt' })],
+    ['model/delete', () => apiClient.deleteModel('model', 'alice')],
+    ['model/serving/delete', () => apiClient.deleteModelServing('serving')],
+    ['scheduled/offline', () => apiClient.offlineScheduledTask('schedule')],
+    ['scheduled/del', () => apiClient.deleteScheduledTask('schedule')],
+    ['graph/delete', () => apiClient.deleteGraph('project', 'graph')],
+  ] as const;
+
+  for (const [path, command] of commands) {
+    it(`${path}: accepts no-data success and still rejects business errors`, async () => {
+      for (const envelope of [{ status: { code: 0 } }, { status: { code: 0 }, data: null }]) {
+        mockPost.mockResolvedValueOnce({ data: envelope, response: new Response() } as never);
+        await expect(command()).resolves.toBeUndefined();
+      }
+      mockPost.mockResolvedValueOnce({ data: { status: { code: 123, msg: 'denied' } }, response: new Response() } as never);
+      await expect(command()).rejects.toThrow('denied');
+      mockPost.mockResolvedValueOnce({ data: undefined, response: new Response() } as never);
+      await expect(command()).rejects.toThrow('invalid response envelope');
+    });
+  }
 });

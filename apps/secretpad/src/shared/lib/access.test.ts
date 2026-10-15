@@ -112,3 +112,46 @@ describe('getMenu', () => {
     );
   });
 });
+
+
+it('provides separate custom/predefined navigation with matching access rules', () => {
+  for (const context of [center, autonomy, p2p, test]) {
+    const menu = getMenu(context);
+    expect(menu.filter(item => item.path === '/dag')).toHaveLength(1);
+    expect(menu.filter(item => item.path === '/dag-templates')).toHaveLength(1);
+    expect(canAccessPath('/dag-templates', context)).toBe(canAccessPath('/dag', context));
+  }
+  expect(canAccessPath('/dag-templates', edge)).toBe(false);
+});
+
+it.each([center, edgeOnCenter, edge, autonomy, p2p, test])('groups authorized navigation without duplicates or empty sections (%s)', context => {
+ const menu=getMenu(context);
+ const paths=menu.filter(item=>item.path).map(item=>item.path);
+ expect(new Set(paths).size).toBe(paths.length);
+ for(let index=0;index<menu.length;index++){
+  if(menu[index].section) expect(menu[index+1]?.path).toBeTruthy();
+ }
+ if(paths.includes('/dag')){
+  const start=paths.indexOf('/dag');
+  expect(paths[start+1]).toBe('/dag-templates');
+  expect(paths.indexOf('/job-records')).toBeGreaterThan(start);
+ }
+});
+
+it('places task execution before outputs and separates node management from data resources',()=>{
+ const menu=getMenu(center);
+ const grouped:Record<string,string[]>={};let section='';
+ for(const item of menu){if(item.section){section=item.section;grouped[section]=[];}else grouped[section].push(item.path!);}
+ expect(grouped['sidebar.tasksSection']).toEqual(['/job-records','/periodic-tasks','/results','/models']);
+ expect(grouped['sidebar.startSection']).toContain('/privacy-scenes');
+ expect(grouped['sidebar.networkSection']).toContain('/nodes');
+ expect(grouped['sidebar.dataSection']).not.toContain('/nodes');
+ expect(grouped['sidebar.platformSection'].at(-1)).toBe('/account');
+});
+
+it('highlights workbench links with owner parameters and avoids similar route prefixes', async()=>{
+ const {isMenuActive}=await import('./access');
+ expect(isMenuActive('/workbench','/workbench?ownerId=alice')).toBe(true);
+ expect(isMenuActive('/dag-templates','/dag')).toBe(false);
+ expect(isMenuActive('/projects/detail','/projects')).toBe(true);
+});

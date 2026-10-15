@@ -1,3 +1,7 @@
+import { QueryFeedback } from '../../shared/ui/query-feedback';
+import { FilterBar } from '../../shared/ui/filter-bar';
+import { RowActions } from '../../shared/ui/row-actions';
+import { TableView } from '../../shared/ui/table-view';
 /**
  * 数据表管理页（旧前端 `data-manager` 的迁移版）。
  *
@@ -287,7 +291,7 @@ export const DataTablesPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <FilterBar onReset={()=>{setSearchInput('');setSearch('');setStatus('');setTypeFilter('');setPage(1);}}>
         <Input
           aria-label={t('dtList.searchPlaceholder')}
           placeholder={t('dtList.searchPlaceholder')}
@@ -315,7 +319,7 @@ export const DataTablesPage: React.FC = () => {
           className="!w-36"
         />
         <span className="text-[11px] text-gray-400">{t('dtList.statusHint')}</span>
-      </div>
+      </FilterBar>
 
       {batchMode && selectedRows.length > 0 && (
         <div className="flex items-center justify-between px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 text-xs">
@@ -343,7 +347,7 @@ export const DataTablesPage: React.FC = () => {
 
       <Card bodyClassName="p-0">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <TableView id="data-tables"><table className="w-full text-left text-xs">
             <thead className="bg-gray-50 dark:bg-gray-850 text-gray-500 font-semibold border-b border-gray-200 dark:border-gray-800">
               <tr>
                 {batchMode && <th className="p-3 w-8" />}
@@ -360,11 +364,11 @@ export const DataTablesPage: React.FC = () => {
               {listQuery.isLoading && (
                 <tr>
                   <td colSpan={colCount} className="p-4 text-center text-gray-400">
-                    {t('common.loading')}
+                    <QueryFeedback loading/>
                   </td>
                 </tr>
               )}
-              {!listQuery.isLoading && rows.length === 0 && (
+              {!listQuery.isLoading && !listQuery.error && rows.length === 0 && (
                 <tr>
                   <td colSpan={colCount} className="p-6 text-center text-gray-400">
                     {t('dataTables.noData')}
@@ -422,7 +426,7 @@ export const DataTablesPage: React.FC = () => {
                     </td>
                     {showTee && <td className="p-3">{renderTee(r)}</td>}
                     <td className="p-3">
-                      <div className="flex items-center gap-2">
+                      <RowActions>
                         <Button size="sm" variant="link" data-tour={rowIndex === 0 ? 'datatable-auth' : undefined} onClick={() => setDetail({ row: r, tab: 'auth' })}>
                           {t('dtList.authManage')}
                         </Button>
@@ -433,13 +437,13 @@ export const DataTablesPage: React.FC = () => {
                             </Button>
                           </span>
                         )}
-                      </div>
+                      </RowActions>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
-          </table>
+          </table></TableView>
         </div>
         <div className="p-3 border-t border-gray-100 dark:border-gray-800">
           <Pagination page={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} />

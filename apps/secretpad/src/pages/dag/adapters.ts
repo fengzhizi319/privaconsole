@@ -141,7 +141,10 @@ export function toStatusOverlay(status: GraphStatusJava | null | undefined, code
 /** 是否需要继续轮询：有节点处于 INITIALIZED / RUNNING，或刚发起运行且结果尚未 finished。 */
 export function shouldPollStatus(status: GraphStatusJava | null | undefined, runRequested: boolean): boolean {
   if (!status) return runRequested;
-  if (status.nodes.some((n) => isActiveStatus(n.status))) return true;
+  if (status.nodes.some((n) => normalizeStatus(n.status) === NODE_STATUS.RUNNING)) return true;
+  // INITIALIZED 节点只在任务未结束时才代表“排队中”：任务失败/停止后 Kuscia 不会再启动它们
+  // （旧数据中它们可能一直停留在 INITIALIZED），此时继续轮询会让画布永远处于“运行中”。
+  if (status.nodes.some((n) => isActiveStatus(n.status))) return !status.finished;
   return runRequested && !status.finished;
 }
 

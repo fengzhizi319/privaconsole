@@ -1,3 +1,4 @@
+import { NavigationIcon } from './navigation-icon';
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
@@ -13,12 +14,13 @@ import { HELP_LINKS, formatBadgeCount } from './header-utils';
 
 export interface AppHeaderProps {
   title?: string;
+  onOpenNavigation?: () => void;
 }
 
 /** Pending message count polling interval (ms). */
 const PENDING_POLL_MS = 30_000;
 
-export const AppHeader: React.FC<AppHeaderProps> = ({ title = 'Console Overview' }) => {
+export const AppHeader: React.FC<AppHeaderProps> = ({ title = 'Console Overview', onOpenNavigation }) => {
   const { user, logout } = useAuthStore();
   const { resolved, toggle } = useThemeStore();
   const { t, locale, setLocale } = useTranslation();
@@ -88,10 +90,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ title = 'Console Overview'
   );
 
   return (
-    <header className="h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 flex items-center justify-between flex-shrink-0">
+    <header className="h-[76px] bg-white/90 dark:bg-gray-900/90 border-b border-gray-200/70 dark:border-gray-800 px-4 sm:px-6 lg:px-8 gap-3 flex items-center justify-between flex-shrink-0">
       <div className="flex items-center gap-3 min-w-0">
+        <button type="button" aria-label={t('header.openNavigation')} className="lg:hidden rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" onClick={onOpenNavigation}><NavigationIcon name="menu" /></button>
         <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate">{title}</h1>
-        <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 whitespace-nowrap">
+        <span className="hidden 2xl:inline-flex px-2 py-0.5 rounded-md text-[11px] font-mono bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 whitespace-nowrap">
           {subtitle} · {ownerId || '-'}
           {deployMode ? ` · ${deployMode}` : ''}
         </span>
@@ -106,30 +109,30 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ title = 'Console Overview'
         )}
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-3">
         {isCenterAdmin && (
-          <Button size="sm" variant="outline" onClick={reopenGuide} title={t('header.reopenGuide')}>
-            🚀 {t('header.reopenGuide')}
+          <Button className="hidden 2xl:inline-flex whitespace-nowrap" size="sm" variant="outline" onClick={reopenGuide} title={t('header.reopenGuide')}>
+            {t('header.reopenGuide')}
           </Button>
         )}
         <button
           type="button"
           onClick={() => openExternal(HELP_LINKS.community)}
-          className="hidden lg:inline text-xs text-gray-500 hover:text-blue-600"
+          className="hidden 2xl:inline text-xs whitespace-nowrap text-gray-500 hover:text-blue-600"
         >
-          🌐 {t('header.community')}
+          {t('header.community')}
         </button>
         <button
           type="button"
           onClick={() => openExternal(HELP_LINKS.help)}
-          className="hidden lg:inline text-xs text-gray-500 hover:text-blue-600"
+          className="hidden 2xl:inline text-xs whitespace-nowrap text-gray-500 hover:text-blue-600"
         >
-          📖 {t('header.helpCenter')}
+          {t('header.helpCenter')}
         </button>
         {import.meta.env.DEV && (
           // 开发期：后端 OpenAPI 文档（GET /api/v1alpha1/docs）。
-          <a href="/api/v1alpha1/docs" target="_blank" rel="noreferrer" className="hidden lg:inline text-xs text-gray-500 hover:text-blue-600">
-            🧾 API
+          <a href="/api/v1alpha1/docs" target="_blank" rel="noreferrer" className="hidden 2xl:inline text-xs whitespace-nowrap text-gray-500 hover:text-blue-600">
+            API
           </a>
         )}
 
@@ -144,7 +147,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ title = 'Console Overview'
         </select>
 
         <Button size="sm" variant="ghost" onClick={toggle} title="Toggle Theme">
-          {resolved === 'light' ? '🌙' : '☀️'}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">{resolved === 'light' ? <path d="M20 15A8 8 0 0 1 9 4 8 8 0 1 0 20 15Z" /> : <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2" /></>}</svg>
         </Button>
 
         <button
@@ -154,7 +157,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ title = 'Console Overview'
           title={t('header.messages')}
           className="relative p-1.5 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
         >
-          🔔
+          <NavigationIcon name="bell" />
           {pending > 0 && (
             <span
               data-testid="pending-badge"
@@ -178,7 +181,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ title = 'Console Overview'
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center font-bold text-white text-xs">
               {user?.name?.[0]?.toUpperCase() || '?'}
             </div>
-            <div className="flex flex-col text-xs text-left">
+            <div className="hidden sm:flex flex-col text-xs text-left">
               <span className="font-semibold text-gray-800 dark:text-gray-200">{user?.name || '-'}</span>
               <span className="text-[10px] text-gray-400">{user?.ownerType || platformType}</span>
             </div>

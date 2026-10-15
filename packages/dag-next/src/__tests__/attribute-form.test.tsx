@@ -210,3 +210,14 @@ describe('序列化与表单', () => {
     expect(createComponentTranslator({ psi: '隐私求交' }).translate('psi')).toBe('隐私求交');
   });
 });
+
+it('shows an actionable validation summary without changing configured values',()=>{
+ const onChange=vi.fn();
+ render(<AttributeForm defs={[{name:'n',type:'AT_INT',atomic:{upperBoundEnabled:true,upperBound:{i64:3},upperBoundInclusive:true}}]} nodeDef={{attrPaths:['n'],attrs:[{i64:9}]}} onNodeDefChange={onChange} labels={{issues:'待完善配置',validate:'检查配置',valid:'配置完整'}}/>);
+ const summary=screen.getByRole('button',{name:/待完善配置/});
+ expect(summary.textContent).toContain('(1)');
+ fireEvent.click(summary);
+ expect(screen.getByRole('alert').textContent).toContain('≤ 3');
+ expect(screen.getByRole('spinbutton')).toHaveProperty('value','9');
+ expect(onChange).not.toHaveBeenCalled();
+});

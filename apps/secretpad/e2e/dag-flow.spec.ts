@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { login, openFromSidebar, useEnglish } from './helpers';
 
 /**
  * P0 critical path: DAG canvas smoke test.
@@ -6,31 +7,19 @@ import { test, expect } from '@playwright/test';
  */
 test.describe('SecretPad P0 DAG Canvas', () => {
   test.beforeEach(async ({ page }) => {
-    await page.context().addInitScript(() => {
-      localStorage.setItem('secretpad-locale', 'en-US');
-    });
+    await useEnglish(page);
   });
 
   test('navigates to DAG page after login', async ({ page }) => {
-    await page.goto('/');
-    await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('12345678');
-    await page.getByRole('button', { name: /Sign In/i }).click();
+    await login(page);
 
-    await expect(page.locator('h1')).toContainText('Console Dashboard');
-
-    await page.getByRole('link', { name: /DAG Canvas/i }).click();
+    await openFromSidebar(page, 'DAG Canvas');
     await expect(page.locator('h2')).toContainText('DAG Pipeline Editor');
   });
 
   test('renders DAG canvas or empty state', async ({ page }) => {
-    await page.goto('/');
-    await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('12345678');
-    await page.getByRole('button', { name: /Sign In/i }).click();
-
-    await expect(page.locator('h1')).toContainText('Console Dashboard');
-    await page.getByRole('link', { name: /DAG Canvas/i }).click();
+    await login(page);
+    await openFromSidebar(page, 'DAG Canvas');
 
     // Either the workspace renders (top-bar node/edge counter), or the empty state card is shown.
     await expect(
@@ -46,13 +35,8 @@ test.describe('SecretPad P0 DAG Canvas', () => {
    * (2) 拖入节点被父组件重渲染立即重置，而线上失效。
    */
   test('drags an operator from the library onto the canvas', async ({ page }) => {
-    await page.goto('/');
-    await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('12345678');
-    await page.getByRole('button', { name: /Sign In/i }).click();
-
-    await expect(page.locator('h1')).toContainText('Console Dashboard');
-    await page.getByRole('link', { name: /DAG Canvas/i }).click();
+    await login(page);
+    await openFromSidebar(page, 'DAG Canvas');
 
     // 等待页面进入「有图」或「无图」任一状态。
     const counter = page.getByText(/^\d+ nodes · \d+ edges$/);

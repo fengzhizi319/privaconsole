@@ -21,6 +21,7 @@ const NodesPage = lazyPage(() => import('./pages/nodes'), 'NodesPage');
 const DataTablesPage = lazyPage(() => import('./pages/data-tables'), 'DataTablesPage');
 const DataSourcesPage = lazyPage(() => import('./pages/data-sources'), 'DataSourcesPage');
 const DataSourceDetailPage = lazyPage(() => import('./pages/data-sources/detail'), 'DataSourceDetailPage');
+const PredefinedCanvasesPage = lazyPage(() => import('./pages/dag-templates'), 'PredefinedCanvasesPage');
 const DAGPage = lazyPage(() => import('./pages/dag'), 'DAGPage');
 const GraphsPage = lazyPage(() => import('./pages/graphs'), 'GraphsPage');
 const ModelsPage = lazyPage(() => import('./pages/models'), 'ModelsPage');
@@ -191,6 +192,12 @@ export const dagRoute = createRoute({
     type: optStr(search.type),
   }),
   component: DAGPage,
+});
+
+export const predefinedCanvasesRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/dag-templates',
+  component: PredefinedCanvasesPage,
 });
 
 export const graphsRoute = createRoute({
@@ -402,6 +409,7 @@ const routeTree = rootRoute.addChildren([
     dataSourcesRoute,
     dataSourceDetailRoute,
     dagRoute,
+    predefinedCanvasesRoute,
     graphsRoute,
     modelsRoute,
     resultsRoute,

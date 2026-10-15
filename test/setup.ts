@@ -31,3 +31,10 @@ afterEach(() => {
 afterAll(() => {
   server.close();
 });
+
+// jsdom does not implement native modal dialogs. Browser E2E verifies their
+// focus trap and Escape behavior; unit tests only need open/close state.
+if (!HTMLDialogElement.prototype.showModal) {
+  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  HTMLDialogElement.prototype.close = function () { this.open = false; };
+}

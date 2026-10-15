@@ -6,7 +6,9 @@
  * - 任何新增模板只需在此导入并加入 `allTemplates` 数组即可自动被 UI 发现。
  * - 运行时可通过 `templateByKey` 快速查找模板并调用 `build(...)`。
  */
+import { layoutTemplate } from './layout';
 import type { AnyTemplateContribution, TemplateContribution } from './types';
+import { modelingTemplates, isModelingKey } from './templates/modeling';
 import { blankTemplate } from './templates/blank';
 import { dataClassificationTemplate } from './templates/data-classification';
 import { differentialPrivacyTemplate } from './templates/differential-privacy';
@@ -29,6 +31,7 @@ import { teeTemplate } from './templates/tee';
 /** 所有已注册的模板。 */
 export const allTemplates: AnyTemplateContribution[] = [
   blankTemplate,
+  ...modelingTemplates,
   psiTemplate,
   psiGuideTemplate,
   psiTeeTemplate,
@@ -46,7 +49,10 @@ export const allTemplates: AnyTemplateContribution[] = [
   riskGuideTemplate,
   teeTemplate,
   teeGuideTemplate,
-];
+].map(template => ({
+  ...template,
+  build: (input: Parameters<AnyTemplateContribution['build']>[0]) => layoutTemplate((template as AnyTemplateContribution).build(input)),
+}));
 
 /** 模板分类顺序与显示分组键。 */
 export const templateCategories = ['basic', 'privacy', 'ml', 'guide'] as const;
@@ -86,7 +92,7 @@ export function templateByKey(key: string): AnyTemplateContribution | undefined 
  * 当前通过 key 判定；未来可在 TemplateMetadata 增加显式字段。
  */
 export function isTwoTableTemplate(template: AnyTemplateContribution): boolean {
-  return ['psi', 'psiTee', 'scenarioPsi', 'risk', 'tee'].includes(template.metadata.key);
+  return isModelingKey(template.metadata.key) || ['psi', 'psiTee', 'scenarioPsi', 'risk', 'tee'].includes(template.metadata.key);
 }
 
 /**
@@ -110,21 +116,21 @@ export function isSingleTableTemplate(template: AnyTemplateContribution): boolea
  * 类型守卫：判断模板是否需要列多选（特征列）。
  */
 export function needsFeatureColumns(template: AnyTemplateContribution): boolean {
-  return ['risk', 'tee'].includes(template.metadata.key);
+  return isModelingKey(template.metadata.key) || ['risk', 'tee'].includes(template.metadata.key);
 }
 
 /**
  * 类型守卫：判断模板是否需要单选标签列。
  */
 export function needsLabelColumn(template: AnyTemplateContribution): boolean {
-  return ['risk', 'tee'].includes(template.metadata.key);
+  return (isModelingKey(template.metadata.key) && template.metadata.key !== 'kmeans') || ['risk', 'tee'].includes(template.metadata.key);
 }
 
 /**
  * 类型守卫：判断模板是否需要指定预测列名。
  */
 export function needsPredictionName(template: AnyTemplateContribution): boolean {
-  return template.metadata.key === 'risk';
+  return isModelingKey(template.metadata.key) || template.metadata.key === 'risk';
 }
 
 /**

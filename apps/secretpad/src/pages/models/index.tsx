@@ -1,3 +1,7 @@
+import { QueryFeedback } from '../../shared/ui/query-feedback';
+import { FilterBar } from '../../shared/ui/filter-bar';
+import { RowActions } from '../../shared/ui/row-actions';
+import { TableView } from '../../shared/ui/table-view';
 import React, { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Card, ConfirmDialog, Input, Pagination, Select, toast } from '@secretpad/design-system';
@@ -129,12 +133,12 @@ export const ModelsPage: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
+      <div className="flex flex-col gap-4 bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
         <div>
           <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('models.title')}</h2>
           <p className="text-xs text-gray-500">{t('models.subtitle')}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <FilterBar onReset={()=>{setSearch('');setStats('');setPage(1);}}>
           <Select
             className="!w-48"
             value={projectId}
@@ -159,17 +163,17 @@ export const ModelsPage: React.FC = () => {
               </Button>
             </>
           )}
-        </div>
+        </FilterBar>
       </div>
 
       {archived && <div className="text-xs text-amber-600">{t('models.archivedHint')}</div>}
       {(listQuery.error || projectsQuery.error) && (
-        <div className="text-xs text-rose-500">{errorText(listQuery.error || projectsQuery.error)}</div>
+        <QueryFeedback error={listQuery.error || projectsQuery.error} onRetry={()=>{void listQuery.refetch();void projectsQuery.refetch();}}/>
       )}
 
       <Card bodyClassName="p-0">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <TableView id="models"><table className="w-full text-left text-xs">
             <thead className="bg-gray-50 dark:bg-gray-850 text-gray-500 font-semibold border-b border-gray-200 dark:border-gray-800">
               <tr>
                 <th className="p-3">{t('models.name')}</th>
@@ -189,14 +193,14 @@ export const ModelsPage: React.FC = () => {
               {listQuery.isLoading && (
                 <tr>
                   <td colSpan={6} className="p-4 text-center text-gray-400">
-                    {t('common.loading')}
+                    <QueryFeedback loading/>
                   </td>
                 </tr>
               )}
-              {!listQuery.isLoading && models.length === 0 && (
+              {!listQuery.isLoading && !listQuery.error && models.length === 0 && (
                 <tr>
                   <td colSpan={6} className="p-4 text-center text-gray-400">
-                    {t('models.noData')}
+                    <QueryFeedback empty label={t('models.noData')}/>
                   </td>
                 </tr>
               )}
@@ -218,7 +222,7 @@ export const ModelsPage: React.FC = () => {
                     </td>
                     <td className="p-3 text-gray-500">{formatTime(m.gmtCreate)}</td>
                     <td className="p-3">
-                      <div className="flex flex-wrap items-center gap-1">
+                      <RowActions>
                         {canWrite && CAN_PUBLISH.includes(s) && (
                           <Button size="sm" variant="ghost" onClick={() => setPublish({ modelId: m.modelId })}>
                             {t('models.publish')}
@@ -235,7 +239,7 @@ export const ModelsPage: React.FC = () => {
                           </Button>
                         )}
                         {canWrite && CAN_DELETE.includes(s) && (
-                          <Button size="sm" variant="ghost" onClick={() => setConfirm({ kind: 'delete', model: m })}>
+                          <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => setConfirm({ kind: 'delete', model: m })}>
                             {t('common.delete')}
                           </Button>
                         )}
@@ -244,13 +248,13 @@ export const ModelsPage: React.FC = () => {
                             {t('models.viewServing')}
                           </Button>
                         )}
-                      </div>
+                      </RowActions>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
-          </table>
+          </table></TableView>
         </div>
         <div className="flex items-center justify-end gap-3 p-3">
           <Select

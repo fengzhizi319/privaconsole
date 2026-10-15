@@ -259,7 +259,7 @@ export async function getGraphNodeOutputJava(req: { projectId: string; graphId: 
 /* ------------------------------------------------------------------ */
 
 /** POST project/job/list filtered by graph. */
-export async function listGraphJobsJava(req: { projectId: string; graphId?: string; pageNum: number; pageSize: number }): Promise<JavaPage<ProjectJobSummaryVOJava>> {
+export async function listGraphJobsJava(req: { projectId: string; graphId?: string; pageNum: number; pageSize: number; searchKey?: string; status?: string; startTime?: string; endTime?: string }): Promise<JavaPage<ProjectJobSummaryVOJava>> {
   return toJobPage<ProjectJobSummaryVOJava>(await javaPost('project/job/list', req), req.pageSize);
 }
 

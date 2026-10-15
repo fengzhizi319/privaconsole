@@ -78,6 +78,7 @@ const ROUTE_RULES: [prefix: string, rule: Rule][] = [
   ['/privacy-scenes', anyOf(P.CENTER, P.TEST, P.AUTONOMY, P.P2P)],
   ['/dashboard', anyOf(P.CENTER, P.TEST)],
   ['/graphs', anyOf(P.CENTER, P.TEST, P.AUTONOMY, P.P2P)],
+  ['/dag-templates', anyOf(P.CENTER, P.TEST, P.AUTONOMY, P.P2P)],
   ['/dag', anyOf(P.CENTER, P.TEST, P.AUTONOMY, P.P2P)],
   ['/job-records', anyOf(P.CENTER, P.TEST, P.AUTONOMY, P.P2P)],
   ['/models', anyOf(P.CENTER, P.TEST, P.AUTONOMY, P.P2P)],
@@ -124,7 +125,7 @@ export interface MenuItem {
 }
 
 /** Sidebar menu per platform/account (legacy new-home tabs, edge.tsx and node view). */
-export function getMenu(ctx: PlatformContext): MenuItem[] {
+function getPlatformMenu(ctx: PlatformContext): MenuItem[] {
   const own = ctx.ownerId;
   if (ctx.platformType === P.EDGE) {
     return [
@@ -153,6 +154,7 @@ export function getMenu(ctx: PlatformContext): MenuItem[] {
       { section: 'sidebar.p2p' },
       { path: '/p2p/projects', labelKey: 'sidebar.p2pProjects', icon: '📁' },
       { path: '/dag', labelKey: 'sidebar.dag', icon: '⚡' },
+      { path: '/dag-templates', labelKey: 'sidebar.predefinedCanvases', icon: '🧩' },
       { path: '/periodic-tasks', labelKey: 'sidebar.periodicTasks', icon: '⏰' },
       { path: '/p2p/my-node', labelKey: 'sidebar.p2pMyNode', icon: '🖥️' },
       { path: '/institutions', labelKey: 'sidebar.institutions', icon: '🏢' },
@@ -185,6 +187,7 @@ export function getMenu(ctx: PlatformContext): MenuItem[] {
     { section: 'sidebar.collaboration' },
     { path: '/projects', labelKey: 'sidebar.projects', icon: '📁' },
     { path: '/dag', labelKey: 'sidebar.dag', icon: '⚡' },
+      { path: '/dag-templates', labelKey: 'sidebar.predefinedCanvases', icon: '🧩' },
     { path: '/graphs', labelKey: 'sidebar.graphs', icon: '🕸️' },
     { section: 'sidebar.resources' },
   );
@@ -219,4 +222,41 @@ export function getMenu(ctx: PlatformContext): MenuItem[] {
   if (admin) items.push({ path: '/audit', labelKey: 'sidebar.audit', icon: '🧾' });
   items.push({ path: '/account', labelKey: 'sidebar.account', icon: '👤' });
   return items;
+}
+
+
+/** Presentation order is separate from platform-specific visibility above.
+ * Every authorized entry is retained exactly once, including node URL params.
+ */
+const MENU_SECTIONS = [
+  { section: 'sidebar.startSection', paths: ['/dashboard', '/workbench', '/guide', '/privacy-scenes'] },
+  { section: 'sidebar.projectsSection', paths: ['/projects', '/p2p/projects', '/dag', '/dag-templates', '/graphs'] },
+  { section: 'sidebar.dataSection', paths: ['/all-data-sources', '/all-data-tables', '/data-sources', '/data-tables', '/feature-datasource', '/node/$nodeId/data-sources', '/node/$nodeId/data-tables'] },
+  { section: 'sidebar.tasksSection', paths: ['/job-records', '/periodic-tasks', '/results', '/node/$nodeId/results', '/models'] },
+  { section: 'sidebar.networkSection', paths: ['/nodes', '/node/$nodeId', '/p2p/my-node', '/institutions', '/node-routes', '/node/$nodeId/cooperative-nodes'] },
+  { section: 'sidebar.platformSection', paths: ['/messages', '/cloud-logs', '/component-versions', '/audit', '/account'] },
+] as const;
+
+export function getMenu(ctx: PlatformContext): MenuItem[] {
+  const entries = getPlatformMenu(ctx).filter(item => item.path);
+  const remaining = new Map(entries.map(item => [item.path!, item]));
+  const menu: MenuItem[] = [];
+  for (const group of MENU_SECTIONS) {
+    const items: MenuItem[] = [];
+    for (const path of group.paths) {
+      const item = remaining.get(path);
+      if (item) { items.push(item); remaining.delete(path); }
+    }
+    // A restricted platform should never show empty headings.
+    if (items.length) menu.push({ section: group.section }, ...items);
+  }
+  // Future platform entries remain reachable until assigned to a section.
+  if (remaining.size) menu.push({ section: 'sidebar.otherSection' }, ...remaining.values());
+  return menu;
+}
+
+/** Compare pathnames only: workbench links may carry ownerId search params. */
+export function isMenuActive(pathname: string, href: string): boolean {
+  const path = href.split('?')[0];
+  return pathname === path || (path !== '/dashboard' && pathname.startsWith(path + '/'));
 }

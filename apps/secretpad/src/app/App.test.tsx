@@ -34,7 +34,7 @@ describe('App', () => {
 
   it('shows header and sidebar navigation', async () => {
     renderWithI18n(<App />);
-    expect(await screen.findByText('SecretPad')).toBeTruthy();
-    expect(await screen.findByText('Dashboard')).toBeTruthy();
+    expect((await screen.findAllByText('Privahub')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByRole('link', { name: 'Dashboard' })).length).toBeGreaterThan(0);
   });
 });

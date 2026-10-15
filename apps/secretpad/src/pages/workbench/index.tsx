@@ -1,3 +1,4 @@
+import { StatusBadge } from '../../shared/ui/status-badge';
 /**
  * EDGE / P2P 工作台聚合页（Workbench）。
  *
@@ -19,10 +20,11 @@
 import React, { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQuery, useQueries } from '@tanstack/react-query';
-import { Card, Badge, Button } from '@secretpad/design-system';
+import { Card, Button } from '@secretpad/design-system';
 import { apiClient } from '@secretpad/api-client';
 import { useTranslation } from '../../shared/lib/i18n';
-import { usePlatform } from '../../shared/lib/platform';
+import { canAccessPath } from '../../shared/lib/access';
+import { usePlatform, usePlatformContext } from '../../shared/lib/platform';
 import { useAuthStore } from '../../features/auth/model/auth-store';
 
 /** 引导流水线的六个步骤（图标 + i18n 键 + 跳转目标）。 */
@@ -42,6 +44,8 @@ export const WorkbenchPage: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { isP2p } = usePlatform();
+  const context = usePlatformContext();
+  const steps = PIPELINE_STEPS.map(step=>({...step,target:step.target==='/projects'&&isP2p?'/p2p/projects':step.target})).filter(step=>canAccessPath(step.target,context));
   const { user } = useAuthStore();
 
   // 当前用户所属节点（ownerId），消息类接口需要该参数。
@@ -106,6 +110,7 @@ export const WorkbenchPage: React.FC = () => {
 
   // P2P 项目预览（最多 5 条），用于“我的项目”卡片。
   const previewProjects = (p2pProjectsQuery.data ?? []).slice(0, 5);
+  const recentCenterProjects = (centerProjectsQuery.data ?? []).slice(0,5);
 
   const error =
     nodesQuery.error?.message ||
@@ -142,7 +147,7 @@ export const WorkbenchPage: React.FC = () => {
           <div className="mt-5">
             <div className="text-[11px] text-gray-500 font-semibold mb-3">{t('workbench.pipelineTitle')}</div>
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {PIPELINE_STEPS.map((step, idx) => (
+              {steps.map((step, idx) => (
                 <React.Fragment key={step.labelKey}>
                   {/* 步骤节点：点击跳转对应功能页。 */}
                   <button
@@ -155,7 +160,7 @@ export const WorkbenchPage: React.FC = () => {
                     </span>
                   </button>
                   {/* 步骤间箭头（最后一步不渲染）。 */}
-                  {idx < PIPELINE_STEPS.length - 1 && (
+                  {idx < steps.length - 1 && (
                     <span className="text-gray-300 dark:text-gray-600 flex-shrink-0">→</span>
                   )}
                 </React.Fragment>
@@ -171,34 +176,6 @@ export const WorkbenchPage: React.FC = () => {
           {t('common.error', { message: error })}
         </div>
       )}
-
-      {/* 核心指标统计行 */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card bodyClassName="p-4">
-          <div className="text-xs text-gray-500 font-medium">{t('workbench.statNodes')}</div>
-          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{nodes.length}</div>
-          <div className="mt-1 text-[11px] text-emerald-600 font-medium">
-            {readyNodes} {t('workbench.readySuffix')}
-          </div>
-        </Card>
-        <Card bodyClassName="p-4">
-          <div className="text-xs text-gray-500 font-medium">{t('workbench.statTables')}</div>
-          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{totalTables}</div>
-          <div className="mt-1 text-[11px] text-gray-400">—</div>
-        </Card>
-        <Card bodyClassName="p-4">
-          <div className="text-xs text-gray-500 font-medium">{t('workbench.statProjects')}</div>
-          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{projectCount}</div>
-          <div className="mt-1 text-[11px] text-gray-400">—</div>
-        </Card>
-        <Card bodyClassName="p-4">
-          <div className="text-xs text-gray-500 font-medium">{t('workbench.statPending')}</div>
-          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{pendingCount}</div>
-          <div className="mt-1 text-[11px] text-gray-400">
-            {pendingCount === 0 ? t('workbench.noPending') : '—'}
-          </div>
-        </Card>
-      </div>
 
       {/* 主体两列布局：左侧申请事项 + 我的项目，右侧快捷入口。 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -226,7 +203,7 @@ export const WorkbenchPage: React.FC = () => {
                       {msg.type} • {msg.createTime}
                     </div>
                   </div>
-                  <Badge status="warning">{msg.status}</Badge>
+                  <StatusBadge value={msg.status} />
                 </div>
               ))}
             </div>
@@ -265,20 +242,12 @@ export const WorkbenchPage: React.FC = () => {
                       </div>
                       <div className="text-xs text-gray-400 font-mono mt-0.5">{proj.projectId}</div>
                     </div>
-                    <Badge status={proj.status === 'APPROVED' || proj.status === 'AGREE' ? 'success' : 'default'}>
-                      {proj.status || '-'}
-                    </Badge>
+                    <StatusBadge value={proj.status} />
                   </div>
                 ))}
               {/* 非 P2P 模式：展示协作项目数量提示，引导前往项目页。 */}
-              {!isP2p && (
-                <div
-                  onClick={() => navigate({ to: '/projects' })}
-                  className="p-3.5 rounded-xl border border-gray-100 dark:border-gray-800 hover:border-blue-500/40 bg-gray-50/50 dark:bg-gray-850/50 cursor-pointer transition-all text-xs text-gray-500"
-                >
-                  {t('workbench.statProjects')}: {projectCount} → {t('workbench.viewAllProjects')}
-                </div>
-              )}
+              {!isP2p && recentCenterProjects.map(project => <button key={project.projectId} type="button" onClick={()=>navigate({to:'/dag',search:{projectId:project.projectId}})} className="flex w-full items-center justify-between gap-3 rounded-xl border border-gray-100 px-3 py-3 text-left hover:border-blue-300 dark:border-gray-800"><span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{project.projectName}</span><StatusBadge value={project.status}/></button>)}
+              {!isP2p && !recentCenterProjects.length && <p className="py-4 text-center text-sm text-gray-500">{t('common.empty')}</p>}
             </div>
           </Card>
         </div>
@@ -293,9 +262,9 @@ export const WorkbenchPage: React.FC = () => {
               <Button onClick={() => navigate({ to: '/data-tables' })} variant="outline" className="justify-start text-xs p-3">
                 🗄️ {t('workbench.quickData')}
               </Button>
-              <Button onClick={() => navigate({ to: '/nodes' })} variant="outline" className="justify-start text-xs p-3">
+              {canAccessPath('/nodes',context) && <Button onClick={() => navigate({ to: '/nodes' })} variant="outline" className="justify-start text-xs p-3">
                 🖥️ {t('workbench.quickNode')}
-              </Button>
+              </Button>}
               <Button onClick={() => navigate({ to: '/privacy-scenes' })} variant="outline" className="justify-start text-xs p-3">
                 🛡️ {t('workbench.quickScenes')}
               </Button>
@@ -303,6 +272,35 @@ export const WorkbenchPage: React.FC = () => {
           </Card>
         </div>
       </div>
+      <details className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><summary className="cursor-pointer text-sm font-semibold text-gray-700 dark:text-gray-200">{t('display.overview')}</summary><div className="mt-4">      {/* 核心指标统计行 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card bodyClassName="p-4">
+          <div className="text-xs text-gray-500 font-medium">{t('workbench.statNodes')}</div>
+          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{nodes.length}</div>
+          <div className="mt-1 text-[11px] text-emerald-600 font-medium">
+            {readyNodes} {t('workbench.readySuffix')}
+          </div>
+        </Card>
+        <Card bodyClassName="p-4">
+          <div className="text-xs text-gray-500 font-medium">{t('workbench.statTables')}</div>
+          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{totalTables}</div>
+          <div className="mt-1 text-[11px] text-gray-400">—</div>
+        </Card>
+        <Card bodyClassName="p-4">
+          <div className="text-xs text-gray-500 font-medium">{t('workbench.statProjects')}</div>
+          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{projectCount}</div>
+          <div className="mt-1 text-[11px] text-gray-400">—</div>
+        </Card>
+        <Card bodyClassName="p-4">
+          <div className="text-xs text-gray-500 font-medium">{t('workbench.statPending')}</div>
+          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{pendingCount}</div>
+          <div className="mt-1 text-[11px] text-gray-400">
+            {pendingCount === 0 ? t('workbench.noPending') : '—'}
+          </div>
+        </Card>
+      </div>
+
+</div></details>
     </div>
   );
 };

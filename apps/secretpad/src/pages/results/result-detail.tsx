@@ -7,7 +7,7 @@
  * - 表：字段表，数据分类分级结果表标注 L1~L5 / 需复核 / 命中标签字段。
  */
 import React, { useMemo, useState } from 'react';
-import { Badge, Button, Modal, toast } from '@secretpad/design-system';
+import { Badge, Button, Modal, Tabs, toast } from '@secretpad/design-system';
 import type { NodeResultDetailVO, NodeAllResultsVO } from '@secretpad/api-client';
 import { apiClient, normalizeGraphDetail } from '@secretpad/api-client';
 import { CLASSIFICATION_COLUMNS, ChartFrame, DAGNextWorkspace, ReportTabsView, downloadDisabledReason, formatTimestamp, isClassificationTable, parseReportTabs } from '@secretpad/dag-next';
@@ -38,6 +38,7 @@ function buildLineageTree(nodeId: string, nodes: Array<{ id: string; name: strin
 
 export const ResultDetailView: React.FC<{ detail: NodeResultDetailVO; result: NodeAllResultsVO | null }> = ({ detail, result }) => {
   const { t } = useTranslation();
+  const [activeTab,setActiveTab] = useState('content');
   const [fullscreen, setFullscreen] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const vo = detail.nodeResultsVO || {};
@@ -96,7 +97,8 @@ export const ResultDetailView: React.FC<{ detail: NodeResultDetailVO; result: No
         {teeBadge()}
         {vo.pullFromTeeErrMsg && <span className="text-red-500 break-all">{vo.pullFromTeeErrMsg}</span>}
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+      <Tabs activeKey={activeTab} onChange={setActiveTab} items={[{key:'basics',label:t('display.basics')},{key:'content',label:t('display.resultContent')},{key:'lineage',label:t('dagx.lineage')}]}/>
+      <div hidden={activeTab !== 'basics'} className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
         <div>
           <span className="text-gray-500">结果类型：</span>
           {KIND_ZH[vo.datatableType || 'table'] || vo.datatableType}
@@ -128,6 +130,7 @@ export const ResultDetailView: React.FC<{ detail: NodeResultDetailVO; result: No
         </div>
       </div>
 
+      <div hidden={activeTab !== 'lineage'}>
       {graph && dag.nodes.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -145,6 +148,8 @@ export const ResultDetailView: React.FC<{ detail: NodeResultDetailVO; result: No
         </div>
       )}
 
+      </div>
+      <div hidden={activeTab !== 'content'} className="space-y-4">
       {vo.datatableType === 'report' && (
         <div className="space-y-2">
           <div className="font-semibold">报告</div>
@@ -194,6 +199,7 @@ export const ResultDetailView: React.FC<{ detail: NodeResultDetailVO; result: No
         </div>
       )}
 
+      </div>
       <div className="flex justify-end gap-2">
         {vo.datatableType === 'report' && (
           <Button size="sm" variant="primary" disabled={tabs.length === 0} onClick={downloadReport}>

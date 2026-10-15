@@ -51,6 +51,7 @@ function TableSelect({
     <div className="space-y-2">
       <label className="block font-semibold text-gray-700 dark:text-gray-300">{label}</label>
       <select
+        aria-label={`${label} - ${t('dag.selectNode')}`}
         value={nodeId}
         onChange={(e) => onNodeChange(e.target.value)}
         disabled={disabled}
@@ -64,6 +65,7 @@ function TableSelect({
         ))}
       </select>
       <select
+        aria-label={`${label} - ${t('dag.selectTable')}`}
         value={tableId}
         onChange={(e) => onTableChange(e.target.value)}
         disabled={disabled || tables.length === 0}
@@ -99,6 +101,7 @@ function ColumnSelect({
     <div className="space-y-2">
       <label className="block font-semibold text-gray-700 dark:text-gray-300">{label}</label>
       <select
+        aria-label={label}
         multiple={multiple}
         value={value}
         onChange={(e) => {

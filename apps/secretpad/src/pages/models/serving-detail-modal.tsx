@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Badge, Button, Empty, Modal } from '@secretpad/design-system';
+import { Badge, Button, Empty, Modal, Drawer, Tabs } from '@secretpad/design-system';
 import { apiClient, getModelPartiesJava, getModelServingJava, type ModelPackJava } from '@secretpad/api-client';
 import { DAGNextWorkspace } from '@secretpad/dag-next';
 import { DagPreview } from '@/features/lineage/dag-preview';
@@ -35,11 +35,14 @@ export const ServingDetailModal: React.FC<{ model: ModelPackJava | null; project
     enabled: !!model?.modelId && !!projectId,
   });
   const preview = useMemo(() => modelInfoPreview(infoQuery.data), [infoQuery.data]);
+  const [tab,setTab] = useState('basics');
   const [fullscreen, setFullscreen] = useState(false);
+  React.useEffect(()=>{setTab('basics');setFullscreen(false);},[model?.modelId]);
+
   const details = servingQuery.data?.servingDetails || [];
 
   return (
-    <Modal
+    <Drawer
       isOpen={!!model}
       onClose={onClose}
       width="max-w-2xl"
@@ -50,8 +53,9 @@ export const ServingDetailModal: React.FC<{ model: ModelPackJava | null; project
         </Button>
       }
     >
-      <div className="text-xs space-y-4 max-h-[65vh] overflow-y-auto pr-1">
-        <div>
+      <div className="text-xs space-y-4">
+        <Tabs activeKey={tab} onChange={setTab} items={[{key:'basics',label:t('display.basics')},{key:'data',label:t('display.data')},{key:'lineage',label:t('models.modelGraph')},{key:'serving',label:t('models.servingDetail')}]}/>
+        <div hidden={tab !== 'basics'}>
           <InfoRow label={t('models.modelId')}>{model?.modelId}</InfoRow>
           <InfoRow label={t('models.stats')}>{model?.modelStats || '-'}</InfoRow>
           {model?.servingId && <InfoRow label={t('models.servingId')}>{model.servingId}</InfoRow>}
@@ -63,7 +67,7 @@ export const ServingDetailModal: React.FC<{ model: ModelPackJava | null; project
           ))}
         </div>
 
-        <div>
+        <div hidden={tab !== 'lineage'}>
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-gray-500 text-[10px] font-semibold uppercase tracking-wide">{t('models.modelGraph')}</span>
             {preview.nodes.length > 0 && (
@@ -78,7 +82,7 @@ export const ServingDetailModal: React.FC<{ model: ModelPackJava | null; project
           <DagPreview nodes={preview.nodes} edges={preview.edges} highlight={preview.highlight} />
         </div>
 
-        <div>
+        <div hidden={tab !== 'data'}>
           <div className="text-gray-500 text-[10px] font-semibold uppercase tracking-wide mb-1.5">{t('models.exportDetail')}</div>
           {partiesQuery.isLoading && <div className="text-gray-400">{t('common.loading')}</div>}
           {!partiesQuery.isLoading && (partiesQuery.data || []).length === 0 && <div className="text-gray-400">{t('models.exportNoParties')}</div>}
@@ -100,7 +104,7 @@ export const ServingDetailModal: React.FC<{ model: ModelPackJava | null; project
           </div>
         </div>
 
-        <div>
+        <div hidden={tab !== 'serving'}>
           <div className="text-gray-500 text-[10px] font-semibold uppercase tracking-wide mb-1.5">{t('models.servingDetail')}</div>
           {!model?.servingId && <Empty>{t('models.servingNoDetail')}</Empty>}
           {servingQuery.isLoading && <div className="text-gray-400">{t('common.loading')}</div>}
@@ -144,6 +148,6 @@ export const ServingDetailModal: React.FC<{ model: ModelPackJava | null; project
           {fullscreen && <DAGNextWorkspace readOnly title={preview.graphName} initialNodes={preview.nodes} initialEdges={preview.edges} />}
         </div>
       </Modal>
-    </Modal>
+    </Drawer>
   );
 };

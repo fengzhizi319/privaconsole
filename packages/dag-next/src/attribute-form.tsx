@@ -36,6 +36,9 @@ export type { AttrTypeName, AttributeDef, AttributeValue } from './component-con
 /* -------------------------------------------------------------------------- */
 
 export interface AttributeFormLabels {
+  issues?: string;
+  validate?: string;
+  valid?: string;
   advanced?: string;
   noAttrs?: string;
   optional?: string;
@@ -1172,6 +1175,17 @@ export const AttributeForm = forwardRef<AttributeFormHandle, AttributeFormProps>
 
   return (
     <div className="space-y-1" data-render-key={codeName ? CODE_NAME_RENDER_KEY[codeName] ?? '' : ''}>
+      <div className={`sticky top-0 z-10 mb-3 rounded-lg border p-3 text-xs ${errorsList.length ? 'border-amber-500/40 bg-gray-950 text-amber-300' : 'border-emerald-500/30 bg-gray-950 text-emerald-300'}`}>
+        <button type="button" className="flex w-full items-center justify-between gap-2 text-left" onClick={()=>setShowErrors(value=>!value)} aria-expanded={showErrors}>
+          <span>{errorsList.length ? `${labels.issues ?? 'Configuration issues'} (${errorsList.length})` : labels.valid ?? 'Configuration complete'}</span>
+          <span className="text-blue-300">{labels.validate ?? 'Check configuration'}</span>
+        </button>
+        {showErrors && errorsList.length>0 && <ul className="mt-2 max-h-40 space-y-1 overflow-auto">{errorsList.map((error,index)=><li key={`${error.path}-${index}`}><button type="button" className="text-left underline decoration-dotted underline-offset-2" onClick={event=>{
+          const form=event.currentTarget.closest('[data-render-key]');
+          const target=[...(form?.querySelectorAll<HTMLElement>('[data-attr-path]')||[])].find(item=>item.dataset.attrPath===error.path);
+          target?.scrollIntoView({block:'center'});target?.querySelector<HTMLElement>('input,select,textarea,button')?.focus();
+        }}>{translateFn(error.path)}: {formatError(error)}</button></li>)}</ul>}
+      </div>
       <NodeList nodes={tree} ctx={ctx} depth={0} />
     </div>
   );

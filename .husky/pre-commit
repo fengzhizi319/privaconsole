@@ -3,11 +3,12 @@
 # -----------------------------------------------------------------------------
 # 触发时机：每次 `git commit` 之前由 git 自动执行。
 # 执行内容：对「本次暂存（staged）」的前端文件运行 lint-staged，
-#           即 eslint --fix（见 web/package.json 的 lint-staged 配置）。
+#           即 eslint --fix（见 package.json 的 lint-staged 配置）。
 # 失败行为：任一命令非零退出则中断本次提交，问题文件不会被提交。
 #
-# 注意：git 钩子的工作目录为仓库根（secretpad/），而 pnpm workspace 位于
-#       web/ 子目录，因此需先 cd web 再执行 pnpm 命令。
+# 注意：本目录（privahub/web）是独立 git 仓库，钩子工作目录即仓库根，
+#       husky 会把 node_modules/.bin 加入 PATH，无需 cd 或 pnpm 前缀。
+#       安装方式：`pnpm install` 触发 package.json 的 prepare（husky），
+#       将本仓库的 core.hooksPath 设为 .husky/_。
 # =============================================================================
-cd web
-pnpm lint-staged
+lint-staged

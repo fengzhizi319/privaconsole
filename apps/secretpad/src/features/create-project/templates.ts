@@ -12,6 +12,7 @@ import {
   isSingleTableTemplate,
   isTwoTableTemplate,
   needsFeatureColumns,
+  needsLabelColumn,
   needsPredictionName,
   templateByKey,
 } from '../dag-templates/registry';
@@ -88,7 +89,7 @@ export function buildTemplateConfigs(templateKey: string, participants: Particip
     if (needsFeatureColumns(template)) {
       configs.featureSelects = { ss: [] };
       const demo = receiver && defaultJoinKey(receiver.nodeId);
-      configs.labelSelects = { s: demo ? 'y' : '' };
+      if (needsLabelColumn(template)) configs.labelSelects = { s: demo ? 'y' : '' };
     }
     if (needsPredictionName(template)) configs.pred = { s: 'pred' };
     return configs;

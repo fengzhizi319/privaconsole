@@ -1,7 +1,9 @@
+import { RowActions } from '../../shared/ui/row-actions';
+import { StatusBadge } from '../../shared/ui/status-badge';
 import React, { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, Button, Badge, Modal, ConfirmDialog, FormField, Input, Select, Textarea, Tour, toast } from '@secretpad/design-system';
+import { Card, Button, Badge, Drawer, Tabs, Modal, ConfirmDialog, FormField, Input, Select, Textarea, Tour, toast } from '@secretpad/design-system';
 import { PAGE_TOUR_KEYS, usePageTour } from '../../features/guide-tour';
 import { GraphCountPopover, JobCountPopover } from './count-popover';
 import type { Project, JobExecution, ProjectNodeVO, ProjectDatatableBase } from '@secretpad/api-client';
@@ -10,9 +12,10 @@ import { useTranslation } from '../../shared/lib/i18n';
 import { usePlatform } from '../../shared/lib/platform';
 import { JobDetailModal } from '../../features/job-detail';
 import { CreateProjectWizard, validateProjectDescription, validateProjectName, PROJECT_DESC_MAX, PROJECT_NAME_MAX } from '../../features/create-project';
-import { filterProjects, projectPermissions, projectCounts, isDeleteConfirmed } from './project-list.logic';
-import type { ModeFilter } from './project-list.logic';
-import { NODE_STATUS, normalizeStatus, statusBadge } from '@secretpad/dag-next';
+import { filterProjects, projectPermissions, projectCounts, isDeleteConfirmed, groupProjects } from './project-list.logic';
+import type { ModeFilter, ProjectGrouping } from './project-list.logic';
+import { type ProjectView, ProjectGroup } from './project-group';
+import { NODE_STATUS, normalizeStatus } from '@secretpad/dag-next';
 
 /**
  * 项目列表与详情页面。
@@ -35,11 +38,24 @@ export const ProjectsPage: React.FC = () => {
   const perms = projectPermissions(platform);
 
   const [search, setSearch] = useState('');
+  const [view, setView] = useState<ProjectView>(() => {
+    try {
+      const saved = localStorage.getItem('privahub-project-view');
+      return saved === 'cards' || saved === 'all' ? saved : 'list';
+    } catch { return 'list'; }
+  });
+  const changeView = (value: ProjectView) => {
+    setView(value);
+    try { localStorage.setItem('privahub-project-view', value); } catch { /* Browsing works when storage is unavailable. */ }
+  };
+  const [grouping, setGrouping] = useState<ProjectGrouping>('mode');
   const [modeFilter, setModeFilter] = useState<ModeFilter>('ALL');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Detail drawer
+  const [detailTab, setDetailTab] = useState('basics');
+  const openDetail = (project: Project) => {setDetailTab('basics');setDetailProject(project);};
   const [detailProject, setDetailProject] = useState<Project | null>(null);
 
   // Edit modal
@@ -225,12 +241,11 @@ export const ProjectsPage: React.FC = () => {
   const projectNodeNames = (project: Project) =>
     (project?.nodes || []).map((n) => n?.nodeName || n?.nodeId || '').filter(Boolean).join(', ');
 
-  const jobStatusBadge = (status: string) => statusBadge(status);
 
   return (
     <div className="space-y-6">
       {/* Header & Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800">
         <div>
           <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('projects.title')}</h2>
           <p className="text-xs text-gray-500">{t('projects.subtitle')}</p>
@@ -238,13 +253,13 @@ export const ProjectsPage: React.FC = () => {
         <div className="flex flex-wrap items-center gap-3">
           <input
             type="text"
-            placeholder={t('projects.searchPlaceholder')}
+            aria-label={t('projectBrowser.search')}
+            placeholder={t('projectBrowser.search')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="px-3 py-1.5 rounded-lg text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
           />
-          <Select
-            className="w-36"
+          <div className="w-36 shrink-0"><Select
             value={modeFilter}
             onChange={(v) => setModeFilter(v as ModeFilter)}
             options={[
@@ -252,7 +267,22 @@ export const ProjectsPage: React.FC = () => {
               { value: 'MPC', label: t('projects.modeFilterMpc') },
               { value: 'TEE', label: t('projects.modeFilterTee') },
             ]}
-          />
+          /></div>
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            {t('projectBrowser.groupBy')}
+            <select aria-label={t('projectBrowser.groupBy')} value={grouping} onChange={event => setGrouping(event.target.value as ProjectGrouping)} className="rounded-lg border border-gray-200 bg-gray-50 p-2 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100">
+              <option value="mode">{t('projectBrowser.mode')}</option>
+              <option value="status">{t('projectBrowser.status')}</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            {t('projectBrowser.view')}
+            <select aria-label={t('projectBrowser.view')} value={view} onChange={event => changeView(event.target.value as ProjectView)} className="rounded-lg border border-gray-200 bg-gray-50 p-2 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100">
+              <option value="list">{t('projectBrowser.listView')}</option>
+              <option value="cards">{t('projectBrowser.cardView')}</option>
+              <option value="all">{t('projectBrowser.allView')}</option>
+            </select>
+          </label>
           {perms.canCreate && (
             <Button variant="primary" size="md" icon={<span>＋</span>} onClick={() => setIsWizardOpen(true)} data-tour="project-create">
               {t('projects.create')}
@@ -268,21 +298,39 @@ export const ProjectsPage: React.FC = () => {
       )}
 
       {/* Project Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-tour="project-list">
-        {filteredProjects.map((project) => {
+      <p className="text-xs text-gray-500" role="status">{t('projectBrowser.count', { count: filteredProjects.length, total: projects.length })}</p>
+      {projectsQuery.isLoading && <p className="text-sm text-gray-500">{t('common.loading')}</p>}
+      <div className="space-y-5" data-tour="project-list">
+        {groupProjects(filteredProjects, grouping).map(group => (
+          <ProjectGroup view={view} key={`${grouping}/${group.key}/${search}/${modeFilter}`} title={grouping === 'mode' ? t('projects.modeTag', {mode: group.key}) : group.key === 'UNKNOWN' ? t('projectBrowser.unknown') : group.key} projects={group.projects}>
+          {(project) => {
           const counts = projectCounts(project);
+          if (view === 'list') return <div key={project.projectId} data-project-row={project.projectId} className="grid min-w-[980px] grid-cols-[minmax(160px,2fr)_80px_90px_70px_70px_minmax(100px,1fr)_200px] items-center gap-3 border-b border-gray-100 px-4 py-2 text-xs last:border-0 hover:bg-blue-50/50 dark:border-gray-800 dark:hover:bg-blue-950/20">
+            <button type="button" className="truncate text-left font-semibold text-gray-900 hover:text-blue-600 dark:text-gray-100" title={`${project.projectName}
+${project.projectId}
+${project.description || ''}`} onClick={() => openDetail(project)}>{project.projectName || project.name || project.projectId}</button>
+            <span className="font-mono text-blue-600">{project.computeMode || 'MPC'}</span>
+            <StatusBadge value={project.status} />
+            <GraphCountPopover projectId={project.projectId} count={counts.graphCount} />
+            <JobCountPopover projectId={project.projectId} count={counts.jobCount} />
+            <span className="truncate text-gray-500" title={projectNodeNames(project)}>{projectNodeNames(project) || '-'}</span>
+            <RowActions>
+              <Button size="sm" variant="link" data-tour="project-open-dag" onClick={() => openDag(project.projectId)}>{t('projects.openDagShort')}</Button>
+              {perms.canManage && <><Button size="sm" variant="ghost" onClick={() => openEdit(project)}>{t('projects.edit')}</Button><Button size="sm" variant="ghost" className="text-rose-600" onClick={() => openDelete(project)}>{t('projects.delete')}</Button></>}
+            </RowActions>
+          </div>;
           return (
             <Card
               key={project.projectId}
               className="hover:shadow-md transition-all flex flex-col justify-between cursor-pointer"
-              onClick={() => setDetailProject(project)}
+              onClick={() => openDetail(project)}
             >
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <span className="px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
                     {t('projects.modeTag', { mode: project.computeMode })}
                   </span>
-                  <Badge status={project.status === 'ACTIVE' ? 'success' : 'default'}>{project.status}</Badge>
+                  <StatusBadge value={project.status} />
                 </div>
 
                 <h3 className="font-bold text-base text-gray-900 dark:text-gray-100 mb-1.5">{project.projectName}</h3>
@@ -297,14 +345,14 @@ export const ProjectsPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs">
+              <div className="pt-3 border-t border-gray-100 dark:border-gray-800 flex flex-wrap gap-3 items-center justify-between text-xs">
                 <div className="flex items-center gap-1 text-gray-500 min-w-0">
                   <span>{t('projects.joinedNodes')}:</span>
                   <span className="font-semibold text-gray-700 dark:text-gray-300 truncate max-w-[110px]">
                     {projectNodeNames(project) || '-'}
                   </span>
                 </div>
-                <div className="flex items-center gap-1">
+                <RowActions>
                   <Button size="sm" variant="link" data-tour="project-open-dag" onClick={(e) => { e.stopPropagation(); openDag(project.projectId); }}>
                     {t('projects.openDagShort')}
                   </Button>
@@ -314,14 +362,15 @@ export const ProjectsPage: React.FC = () => {
                       <Button size="sm" variant="danger" onClick={(e) => { e.stopPropagation(); openDelete(project); }}>{t('projects.delete')}</Button>
                     </>
                   )}
-                </div>
+                </RowActions>
               </div>
             </Card>
           );
-        })}
+          }}</ProjectGroup>
+        ))}
       </div>
 
-      {filteredProjects.length === 0 && !error && !projectsQuery.error && (
+      {filteredProjects.length === 0 && !projectsQuery.isLoading && !error && !projectsQuery.error && (
         <div className="text-center text-xs text-gray-400 py-10">{t('projects.noProjects')}</div>
       )}
 
@@ -361,19 +410,12 @@ export const ProjectsPage: React.FC = () => {
 
       {/* Detail Drawer */}
       {detailProject && (
-        <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setDetailProject(null)} />
-          <div className="relative w-full max-w-lg bg-white dark:bg-gray-900 h-full shadow-2xl overflow-y-auto p-6 space-y-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-                  {detailData?.projectName || detailProject.projectName}
-                </h3>
-                <p className="text-xs text-gray-500 font-mono mt-1">{detailProject.projectId}</p>
-              </div>
-              <Button size="sm" variant="ghost" onClick={() => setDetailProject(null)}>✕</Button>
-            </div>
-
+        <Drawer isOpen={!!detailProject} onClose={() => setDetailProject(null)} title={detailData?.projectName || detailProject.projectName} width="max-w-2xl" footer={<Button variant="primary" onClick={() => openDag(detailProject.projectId)}>{t('projects.openDag')}</Button>}>
+          <div className="space-y-5">
+            <p className="break-all font-mono text-xs text-gray-500">{detailProject.projectId}</p>
+            <Tabs activeKey={detailTab} onChange={setDetailTab} items={['basics','data','tasks'].map(key=>({key,label:t(`display.${key}`)}))}/>
+            {(detailQuery.error || jobsQuery.error) && <p role="alert" className="text-sm text-rose-600">{t('common.error',{message:detailQuery.error?.message||jobsQuery.error?.message||''})}</p>}
+            <div hidden={detailTab !== 'basics'}>
             <div className="text-xs space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">{t('projects.modeLabel')}:</span>
@@ -385,6 +427,8 @@ export const ProjectsPage: React.FC = () => {
               </div>
             </div>
 
+            </div>
+            <div hidden={detailTab !== 'data'} className="space-y-5">
             {/* Joined nodes + add actions */}
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -440,6 +484,8 @@ export const ProjectsPage: React.FC = () => {
               </div>
             </div>
 
+            </div>
+            <div hidden={detailTab !== 'tasks'} className="space-y-4">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('projects.jobs')}</h4>
               <Button size="sm" variant="primary" onClick={() => openDag(detailProject.projectId)}>{t('projects.openDag')}</Button>
@@ -457,7 +503,7 @@ export const ProjectsPage: React.FC = () => {
                     <div className="text-gray-400 mt-0.5 font-mono">{job.createTime} {job.duration ? `· ${job.duration}` : ''}</div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <Badge status={jobStatusBadge(job.status)}>{job.status}</Badge>
+                    <StatusBadge value={job.status} />
                     {normalizeStatus(job.status) === NODE_STATUS.RUNNING && perms.canManage && (
                       <Button size="sm" variant="danger" loading={stopJobMutation.isPending} onClick={(e) => { e.stopPropagation(); stopJobMutation.mutate(job); }}>
                         {t('projects.stopJob')}
@@ -467,8 +513,9 @@ export const ProjectsPage: React.FC = () => {
                 </div>
               ))}
             </div>
+            </div>
           </div>
-        </div>
+        </Drawer>
       )}
 
       {/* Job Detail Modal */}

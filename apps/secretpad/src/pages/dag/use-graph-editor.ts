@@ -28,13 +28,14 @@ interface Options {
 
 export function useGraphEditor({ graphKey, server, defs, translate, save, onSaveError, debounceMs = 1000, readOnly }: Options) {
   const mapped = useMemo(() => mapGraphToDAG(server, defs, translate), [server, defs, translate]);
-  const [canvas, setCanvas] = useState<{ nodes: DAGNode[]; edges: DAGEdge[] }>(mapped);
+  const [canvas, setCanvas] = useState({ graphKey, ...mapped });
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const localRef = useRef<{ nodes: DAGNode[]; edges: DAGEdge[] }>(mapped);
   const dirtyRef = useRef(false);
   const versionRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const graphKeyRef = useRef(graphKey);
+  const graphGenerationRef = useRef(0);
   const saveRef = useRef(save);
   const errRef = useRef(onSaveError);
   useEffect(() => {
@@ -49,10 +50,14 @@ export function useGraphEditor({ graphKey, server, defs, translate, save, onSave
     }
     if (!dirtyRef.current) return;
     const version = versionRef.current;
+    const savingGraphKey = graphKeyRef.current;
+    const savingGeneration = graphGenerationRef.current;
     const snapshot = localRef.current;
     setSaveState('saving');
     try {
       await saveRef.current(snapshot.nodes, snapshot.edges);
+      // A response from graph A must never clear graph B's dirty state.
+      if (graphKeyRef.current !== savingGraphKey || graphGenerationRef.current !== savingGeneration) return;
       if (versionRef.current === version) {
         dirtyRef.current = false;
         setSaveState('saved');
@@ -60,6 +65,7 @@ export function useGraphEditor({ graphKey, server, defs, translate, save, onSave
         setSaveState('dirty');
       }
     } catch (e) {
+      if (graphKeyRef.current !== savingGraphKey || graphGenerationRef.current !== savingGeneration) return;
       setSaveState('dirty');
       errRef.current?.(e);
     }
@@ -76,18 +82,22 @@ export function useGraphEditor({ graphKey, server, defs, translate, save, onSave
     // 组件定义变化只补充端口 / 完成度，不重置画布（避免冲掉刚添加、尚未上报的节点）。
     if (switched || (serverChanged && !dirtyRef.current)) {
       if (switched) {
+        graphGenerationRef.current += 1;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = null;
+        versionRef.current += 1;
         dirtyRef.current = false;
         setSaveState('idle');
       }
       localRef.current = mapped;
-      setCanvas(mapped);
+      setCanvas({ graphKey, ...mapped });
       return;
     }
     // 保留本地结构，仅用最新组件定义补充端口与完成度。
     const merged = localRef.current.nodes.map((n) => (!n.ports?.length && n.codeName && defs[n.codeName] ? decorateNode(n, defs[n.codeName]) : n));
     if (merged.some((n, i) => n !== localRef.current.nodes[i])) {
       localRef.current = { nodes: merged, edges: localRef.current.edges };
-      setCanvas(localRef.current);
+      setCanvas({ graphKey, ...localRef.current });
     }
   }, [mapped, graphKey, defs, server]);
 
@@ -118,7 +128,7 @@ export function useGraphEditor({ graphKey, server, defs, translate, save, onSave
   const patchNodes = useCallback((fn: (nodes: DAGNode[]) => DAGNode[]) => {
     const next = { nodes: fn(localRef.current.nodes), edges: localRef.current.edges };
     localRef.current = next;
-    setCanvas(next);
+    setCanvas({ graphKey: graphKeyRef.current, ...next });
   }, []);
 
   useEffect(
@@ -129,8 +139,9 @@ export function useGraphEditor({ graphKey, server, defs, translate, save, onSave
   );
 
   return {
-    initialNodes: canvas.nodes,
-    initialEdges: canvas.edges,
+    // Never mount the next workspace with the previous graph, even for one render.
+    initialNodes: canvas.graphKey === graphKey ? canvas.nodes : mapped.nodes,
+    initialEdges: canvas.graphKey === graphKey ? canvas.edges : mapped.edges,
     saveState,
     onGraphChange,
     flush,

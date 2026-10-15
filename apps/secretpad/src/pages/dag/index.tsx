@@ -1,3 +1,4 @@
+import { groupProjects } from '../projects/project-list.logic';
 /**
  * DAG 训练流编辑页（旧版 modules/main-dag + dag-layout）。
  *
@@ -10,7 +11,7 @@
  *   数据表树、复制训练流、TEE 下载申请、操作引导。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearch } from '@tanstack/react-router';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, Button, Modal, ConfirmDialog, Tour, toast } from '@secretpad/design-system';
 import type { GraphMetaVO, GraphDetailJava, ProjectDetailJava } from '@secretpad/api-client';
@@ -72,11 +73,19 @@ const EMPTY_DEFS: Record<string, ComponentDefLike | undefined> = {};
 export const DAGPage: React.FC = () => {
   const { t, locale } = useTranslation();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const platform = usePlatform();
   const search = useSearch({ strict: false }) as { projectId?: string; graphId?: string; dagId?: string };
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>(search.projectId || '');
   const [selectedGraphId, setSelectedGraphId] = useState<string>(search.graphId || search.dagId || '');
+  // Router search can change without remounting this page (links and browser history).
+  // useState initializers alone would keep the previous project's canvas selected.
+  useEffect(() => {
+    if (search.projectId) setSelectedProjectId(search.projectId);
+    setSelectedGraphId(search.graphId || search.dagId || '');
+  }, [search.projectId, search.graphId, search.dagId]);
+
   const [error, setError] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newGraphName, setNewGraphName] = useState('');
@@ -147,6 +156,18 @@ export const DAGPage: React.FC = () => {
   const graphs = useMemo(() => graphsQuery.data ?? [], [graphsQuery.data]);
   const selectedGraph: GraphMetaVO | null = graphs.find((g) => g.graphId === selectedGraphId) ?? graphs[0] ?? null;
   const graphId = selectedGraph?.graphId || '';
+  // Node inspectors and graph-specific dialogs belong to one canvas only.
+  useEffect(() => {
+    setSelectedNode(null);
+    setIsPackModalOpen(false);
+    setIsScheduledModalOpen(false);
+    setIsRecordsDrawerOpen(false);
+    setIsAdvancedOpen(false);
+    setIsRenameModalOpen(false);
+    setDeleteGraphTarget(null);
+    setError(null);
+  }, [selectedProjectId, graphId]);
+
   // 细粒度编辑权限（旧版 ProjectEditService.canEdit）：画布级 / 项目级分开控制，只读时仍可查看日志与结果。
   const perms = dagEditPermissions({
     platformType: platform.platformType,
@@ -273,7 +294,11 @@ export const DAGPage: React.FC = () => {
     return queryClient.invalidateQueries({ queryKey: ['graph-detail', selectedProjectId, graphId] });
   };
 
-  const templateWizard = useTemplateWizard(selectedProject, (id) => setSelectedGraphId(id));
+  const templateWizard = useTemplateWizard(selectedProject, (id) => {
+    setSelectedGraphId(id);
+    // Keep the new canvas bookmarkable; refresh must not reopen the previous graph.
+    void navigate({ to: '/dag', search: { projectId: selectedProjectId, graphId: id } });
+  });
 
   /* ------------------------------------------------------------------ */
   /* 图管理                                                              */
@@ -641,6 +666,7 @@ export const DAGPage: React.FC = () => {
       deleteNode: t('common.delete'),
       emptyCanvas: t('dag.emptyCanvas'),
       advancedConfig: t('dag.advancedConfig'),
+      configIssues: t('display.issues'), validateConfig: t('display.validate'), configValid: t('display.valid'),
       noAttrs: t('dag.noAttrs'),
       optional: t('dag.optionalAttr'),
       required: t('dag.requiredAttr'),
@@ -768,11 +794,9 @@ export const DAGPage: React.FC = () => {
             }}
             className="px-3 py-1.5 rounded-lg text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100"
           >
-            {projects.map((p) => (
-              <option key={p.projectId} value={p.projectId}>
-                {p.projectName}
-              </option>
-            ))}
+            {groupProjects(projects, 'mode').map(group => <optgroup key={group.key} label={group.key}>
+              {group.projects.map(p => <option key={p.projectId} value={p.projectId}>{p.projectName}</option>)}
+            </optgroup>)}
           </select>
           <select
             aria-label="graph"

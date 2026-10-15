@@ -23,7 +23,7 @@ export const scenes: PrivacyScene[] = [
   { key: 'localDp', tags: ['Local DP', 'Differential Privacy'], templateKey: 'localDifferentialPrivacy' },
   { key: 'dpQuery', tags: ['DP Query', 'Differential Privacy'], templateKey: 'differentialPrivacy' },
   { key: 'queryObfuscation', tags: ['Query Obfuscation', 'Privacy'], templateKey: 'queryObfuscation' },
-  { key: 'federatedLearning', tags: ['FL', 'Federated Learning'], templateKey: 'blank' },
+  { key: 'federatedLearning', tags: ['MPC', 'SS-SGD', 'Train → Predict → Evaluate'], templateKey: 'logisticRegression' },
 ];
 
 /** Default demo participants (legacy quick create used alice + bob). */

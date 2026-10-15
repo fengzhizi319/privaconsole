@@ -91,7 +91,11 @@ function unwrap<T>(res: SecretPadResponse<T>): T {
   return res.data;
 }
 
+/** Void commands legitimately omit data; the success envelope is still mandatory. */
 function unwrapVoid(res: SecretPadResponse<unknown>): void {
+  if (!res || !res.status || typeof res.status.code !== 'number') {
+    throw new Error('API returned an invalid response envelope');
+  }
   if (res.status && res.status.code !== 0) {
     throw new Error(res.status.msg || `API error ${res.status.code}`);
   }
@@ -323,7 +327,7 @@ export const apiClient = {
       body: { nodeId } as components['schemas']['NodeIdRequest'],
     });
     if (error) throw new Error(apiError(error));
-    unwrap(data as unknown as SecretPadResponse<unknown>);
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
   async refreshNode(nodeId: string): Promise<Node> {
@@ -466,7 +470,7 @@ export const apiClient = {
       body: { ownerId, datasourceId, type } as components['schemas']['DeleteDatasourceRequest'],
     });
     if (error) throw new Error(apiError(error));
-    unwrap(data as unknown as SecretPadResponse<unknown>);
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
   async getDataTables(ownerId?: string): Promise<DataTable[]> {
@@ -563,7 +567,7 @@ export const apiClient = {
       } as components['schemas']['DeleteDatatableRequest'],
     });
     if (error) throw new Error(apiError(error));
-    unwrap(data as unknown as SecretPadResponse<unknown>);
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
   async getProjectJobs(projectId: string, pageSize = 10, pageNum = 1): Promise<JobExecution[]> {
@@ -623,15 +627,15 @@ export const apiClient = {
       body: { modelId, nodeId } as components['schemas']['DeleteModelPackRequest'],
     });
     if (error) throw new Error(apiError(error));
-    unwrap(data as unknown as SecretPadResponse<unknown>);
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
-  async createModelServing(input: { modelId: string; projectId: string }): Promise<{ servingId?: string }> {
+  async createModelServing(input: components['schemas']['CreateModelServingRequest']): Promise<void> {
     const { data, error } = await api.POST('/api/v1alpha1/model/serving/create', {
       body: input as components['schemas']['CreateModelServingRequest'],
     });
     if (error) throw new Error(apiError(error));
-    return unwrap(data as unknown as SecretPadResponse<{ servingId?: string }>);
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
   async deleteModelServing(servingId: string): Promise<void> {
@@ -639,7 +643,7 @@ export const apiClient = {
       body: { servingId } as components['schemas']['DeleteModelServingRequest'],
     });
     if (error) throw new Error(apiError(error));
-    unwrap(data as unknown as SecretPadResponse<unknown>);
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
   async getModelServingDetail(servingId: string): Promise<components['schemas']['ServingDetailVO']> {
@@ -685,7 +689,7 @@ export const apiClient = {
       body: { scheduleId } as components['schemas']['ScheduledOfflineRequest'],
     });
     if (error) throw new Error(apiError(error));
-    unwrap(data as unknown as SecretPadResponse<unknown>);
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
   async deleteScheduledTask(scheduleId: string): Promise<void> {
@@ -693,7 +697,7 @@ export const apiClient = {
       body: { scheduleId } as components['schemas']['ScheduledDelRequest'],
     });
     if (error) throw new Error(apiError(error));
-    unwrap(data as unknown as SecretPadResponse<unknown>);
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
   async getGraphs(projectId: string): Promise<GraphMetaVO[]> {
@@ -731,7 +735,7 @@ export const apiClient = {
       body: { projectId, graphId } as components['schemas']['DeleteGraphRequest'],
     });
     if (error) throw new Error(apiError(error));
-    unwrap(data as unknown as SecretPadResponse<unknown>);
+    unwrapVoid(data as unknown as SecretPadResponse<unknown>);
   },
 
   async startGraph(projectId: string, graphId: string, nodes: string[]): Promise<string> {
@@ -766,7 +770,15 @@ export const apiClient = {
       body: requests as components['schemas']['GetComponentRequest'][],
     });
     if (error) throw new Error(apiError(error));
-    const payload = unwrap(data as unknown as SecretPadResponse<Record<string, ComponentDef>>);
+    const payload = unwrap(data as unknown as SecretPadResponse<Record<string, ComponentDef> | ComponentDef[]>);
+    // Java and Go return an ordered array; retain map responses for older peers.
+    if (Array.isArray(payload)) {
+      return Object.fromEntries(payload.map((definition, index) => {
+        const request = requests[index];
+        const key = `${definition.domain || request?.domain}/${definition.name || request?.name}`;
+        return [key, definition];
+      }));
+    }
     return payload || {};
   },
 
